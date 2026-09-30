@@ -85,10 +85,10 @@ struct CalibrationDataPoint: Identifiable {
     let id = UUID()
     let timestamp: Date
     let percentage: Double
-    let power: Double          // 瞬时功率 (W)
-    let voltage: Double        // 端电压 (V)
-    let amperage: Double       // 充放电流 (A)
-    let temperature: Double    // 温度 (°C)
+    let power: Double
+    let voltage: Double
+    let amperage: Double
+    let temperature: Double
 }
 
 public struct AggregatedBatteryHealth {
@@ -159,11 +159,21 @@ public struct AggregatedBatteryHealth {
     
     @Published var historyRecords: [CalibrationHistoryRecord] = []
     
+    // 用户可配置的高级设置项
     @Published var highTempThreshold: Double {
         didSet { UserDefaults.standard.set(highTempThreshold, forKey: "highTempThreshold") }
     }
     @Published var resumeTempThreshold: Double {
         didSet { UserDefaults.standard.set(resumeTempThreshold, forKey: "resumeTempThreshold") }
+    }
+    @Published var dischargeTargetPercentage: Int {
+        didSet { UserDefaults.standard.set(dischargeTargetPercentage, forKey: "dischargeTargetPercentage") }
+    }
+    @Published var autoExportReports: Bool {
+        didSet { UserDefaults.standard.set(autoExportReports, forKey: "autoExportReports") }
+    }
+    @Published var soundAlertEnabled: Bool {
+        didSet { UserDefaults.standard.set(soundAlertEnabled, forKey: "soundAlertEnabled") }
     }
     
     private let precisionEngine = PrecisionIntegrationEngine(zeroCurrentJitterThreshold: 0.025)
@@ -189,6 +199,15 @@ public struct AggregatedBatteryHealth {
         
         let storedResume = UserDefaults.standard.double(forKey: "resumeTempThreshold")
         self.resumeTempThreshold = storedResume > 0 ? storedResume : 39.0
+        
+        let storedTarget = UserDefaults.standard.integer(forKey: "dischargeTargetPercentage")
+        self.dischargeTargetPercentage = storedTarget > 0 ? storedTarget : 10
+        
+        let storedExport = UserDefaults.standard.object(forKey: "autoExportReports")
+        self.autoExportReports = (storedExport as? Bool) ?? true
+        
+        let storedSound = UserDefaults.standard.object(forKey: "soundAlertEnabled")
+        self.soundAlertEnabled = (storedSound as? Bool) ?? true
         
         requestNotificationPermission()
         fetchHardwareInfo()
@@ -236,7 +255,9 @@ public struct AggregatedBatteryHealth {
         
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
-        NSSound.beep()
+        if soundAlertEnabled {
+            NSSound.beep()
+        }
     }
     
     func startMonitoringEngine() {
@@ -346,19 +367,20 @@ public struct AggregatedBatteryHealth {
                 let percentDropped = Double(startDischargePercentage - currentPercentage)
                 if percentDropped > 0 && dischargeElapsedSeconds > 10.0 {
                     let secondsPerPercent = dischargeElapsedSeconds / percentDropped
-                    let percentRemaining = max(0.0, Double(currentPercentage - 10))
+                    let percentRemaining = max(0.0, Double(currentPercentage - dischargeTargetPercentage))
                     estimatedRemainingMinutes = Int((percentRemaining * secondsPerPercent) / 60.0)
                     
-                    let totalEstimatedSeconds = 90.0 * secondsPerPercent
+                    let totalDropRange = max(10.0, Double(startDischargePercentage - dischargeTargetPercentage))
+                    let totalEstimatedSeconds = totalDropRange * secondsPerPercent
                     totalDischargeRuntimeMinutes = Int(totalEstimatedSeconds / 60.0)
                 }
             }
             
-            if currentPercentage <= 10 {
+            if currentPercentage <= dischargeTargetPercentage {
                 let h = Int(dischargeElapsedSeconds) / 3600
                 let m = (Int(dischargeElapsedSeconds) % 3600) / 60
                 self.finalDischargeDurationText = "\(h)小时\(m)分 (均耗 \(String(format: "%.1f", dischargeAveragePower))W)"
-                appendLog("已达 100%~10% 放电终点，耗时: \(h)小时\(m)分，平均功率: \(String(format: "%.2f", dischargeAveragePower)) W")
+                appendLog("已达放电终点 (\(dischargeTargetPercentage)%)，耗时: \(h)小时\(m)分，平均功率: \(String(format: "%.2f", dischargeAveragePower)) W")
                 
                 stopStressLoad()
                 currentPhase = .rechargingToFull
@@ -366,7 +388,7 @@ public struct AggregatedBatteryHealth {
                 
                 sendLocalNotification(
                     title: "放电校准阶段结束",
-                    body: "电池已放至 10%，正在等待 AlDente 回充至 100%"
+                    body: "电池已放至目标值，正在等待 AlDente 回充至 100%"
                 )
             }
         } else if currentPhase == .rechargingToFull {
@@ -521,21 +543,23 @@ public struct AggregatedBatteryHealth {
         
         appendLog("==========================================")
         appendLog("            电池校准完整报告             ")
-        appendLog("100%~10% 放电耗时: \(finalDischargeDurationText)")
+        appendLog("放电耗时: \(finalDischargeDurationText)")
         appendLog("实测放电: \(dischargeFormatted) Wh | 实测回充: \(rechargeFormatted) Wh")
         appendLog("推算实际容量: \(capacityFormatted) Wh (\(mahFormatted) mAh) | 实测健康度: \(healthFormatted)")
         appendLog("库仑效率 (Coulombic Efficiency): \(coulombicFormatted)")
         appendLog("直流内阻 (DCIR): \(dcirFormatted)")
         appendLog("==========================================")
         
-        generateReports(
-            dischargeFormatted: dischargeFormatted,
-            rechargeFormatted: rechargeFormatted,
-            capacityFormatted: capacityFormatted,
-            mahFormatted: mahFormatted,
-            healthFormatted: healthFormatted,
-            coulombicFormatted: coulombicFormatted
-        )
+        if autoExportReports {
+            generateReports(
+                dischargeFormatted: dischargeFormatted,
+                rechargeFormatted: rechargeFormatted,
+                capacityFormatted: capacityFormatted,
+                mahFormatted: mahFormatted,
+                healthFormatted: healthFormatted,
+                coulombicFormatted: coulombicFormatted
+            )
+        }
         
         let newRecord = CalibrationHistoryRecord(
             startDate: sessionStartDate ?? Date(),
@@ -622,7 +646,7 @@ public struct AggregatedBatteryHealth {
         开始时间: \(sessionStartDate?.description(with: .current) ?? "--")
         完成时间: \(Date().description(with: .current))
         起始放电电量: \(startDischargePercentage)%
-        100%~10% 放电耗时: \(finalDischargeDurationText)
+        放电耗时: \(finalDischargeDurationText)
         循环次数: \(cycleCount) 次
         设计标称容量: \(String(format: "%.0f", designCapacityMAh)) mAh
         单次推算实际容量: \(capacityFormatted) Wh (\(mahFormatted) mAh)
@@ -795,7 +819,7 @@ public struct AggregatedBatteryHealth {
         }
     }
     
-    // MARK: - 深度电池属性抓取与精准温度传感器探测
+    // MARK: - 深度电池属性抓取与温度解析
     private func fetchBatteryDetails() {
         let matchingDict = IOServiceMatching("AppleSmartBattery")
         let entry = IOServiceGetMatchingService(kIOMainPortDefault, matchingDict)
@@ -860,13 +884,10 @@ public struct AggregatedBatteryHealth {
             }
         }
         
-        // MARK: - 电池温度精准探测链 (Apple Silicon M 系列专用)
+        // 温度探测
         var resolvedTemp: Double? = nil
-        
-        // 探测途径 1: IOHIDEventSystemClient 温度传感器服务
         resolvedTemp = fetchBatteryTemperatureViaHID()
         
-        // 探测途径 2: IOPS 回退
         if resolvedTemp == nil {
             if let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
                let list = IOPSCopyPowerSourcesList(snapshot)?.takeRetainedValue() as? [CFTypeRef] {
@@ -889,7 +910,6 @@ public struct AggregatedBatteryHealth {
         }
     }
     
-    // 从 IOHIDEventSystem 动态抓取电池相关温度传感值
     private func fetchBatteryTemperatureViaHID() -> Double? {
         typealias IOHIDEventSystemClientCreateType = @convention(c) (CFAllocator?) -> Unmanaged<AnyObject>?
         typealias IOHIDEventSystemClientSetMatchingType = @convention(c) (AnyObject, CFDictionary) -> Void

@@ -19,19 +19,40 @@ enum AppThemeColor: String, CaseIterable, Identifiable {
     }
 }
 
+enum AppAppearanceMode: String, CaseIterable, Identifiable {
+    case auto = "跟随系统"
+    case light = "浅色模式"
+    case dark = "深色模式"
+    
+    var id: String { rawValue }
+    
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .auto: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+}
+
 struct ContentView: View {
     @ObservedObject var manager: BatteryCalibrationManager
     @State private var isShowingHistorySheet: Bool = false
     @State private var isShowingSettingsSheet: Bool = false
     @AppStorage("appThemeColor") private var appTheme: AppThemeColor = .blue
-    @Environment(\.colorScheme) private var colorScheme
+    @AppStorage("appAppearanceMode") private var appearanceMode: AppAppearanceMode = .auto
+    @Environment(\.colorScheme) private var systemColorScheme
+
+    private var activeColorScheme: ColorScheme {
+        appearanceMode.colorScheme ?? systemColorScheme
+    }
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 11) {
             headerIntegratedCard
             bentoDoubleDeckGrid
             
-            // 示波图区域：设为弹性伸缩
+            // 示波图区域
             dualOscilloscopeSection
                 .frame(minHeight: 140, idealHeight: 170, maxHeight: 280)
             
@@ -41,14 +62,19 @@ struct ContentView: View {
             collapsibleConsoleSection
                 .frame(minHeight: 90, maxHeight: .infinity)
         }
-        .padding(12)
-        .frame(minWidth: 740, idealWidth: 780, maxWidth: .infinity, minHeight: 560, idealHeight: 650, maxHeight: .infinity)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .padding(14)
+        .frame(minWidth: 750, idealWidth: 790, maxWidth: .infinity, minHeight: 570, idealHeight: 660, maxHeight: .infinity)
+        .background(
+            Color(nsColor: activeColorScheme == .dark ? .windowBackgroundColor : .underPageBackgroundColor)
+        )
+        .preferredColorScheme(appearanceMode.colorScheme)
         .sheet(isPresented: $isShowingHistorySheet) {
             HistoryManagementView(manager: manager, isPresented: $isShowingHistorySheet)
+                .preferredColorScheme(appearanceMode.colorScheme)
         }
         .sheet(isPresented: $isShowingSettingsSheet) {
             SettingsView(manager: manager, isPresented: $isShowingSettingsSheet)
+                .preferredColorScheme(appearanceMode.colorScheme)
         }
     }
 
@@ -69,13 +95,13 @@ struct ContentView: View {
                         phaseBadgeView
                     }
                     Text(headerStatusText)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 10.5, weight: .medium))
                         .foregroundColor(.secondary)
                     
                     HStack(spacing: 6) {
                         Circle()
                             .fill(manager.isAlDenteRunning ? (manager.isAlDenteCalibrating ? Color.orange : Color.green) : Color.secondary.opacity(0.4))
-                            .frame(width: 5, height: 5)
+                            .frame(width: 6, height: 6)
                         Text(manager.isAlDenteRunning ? (manager.isAlDenteCalibrating ? "AlDente 校准联动中" : "AlDente 待命中") : "未检测到 AlDente")
                             .font(.system(size: 9.5))
                             .foregroundColor(.secondary)
@@ -96,11 +122,19 @@ struct ContentView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(Color(nsColor: .quaternaryLabelColor).opacity(colorScheme == .dark ? 0.35 : 0.45))
+            .background(
+                activeColorScheme == .dark
+                    ? Color(nsColor: .quaternaryLabelColor).opacity(0.35)
+                    : Color(nsColor: .controlBackgroundColor)
+            )
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(activeColorScheme == .dark ? 0.08 : 0.06), lineWidth: 0.8)
+            )
         }
-        .padding(10)
-        .modernGlassCard(colorScheme: colorScheme)
+        .padding(11)
+        .modernGlassCard(colorScheme: activeColorScheme)
     }
 
     private var headerStatusText: String {
@@ -138,7 +172,7 @@ struct ContentView: View {
         .foregroundColor(badgeColor)
         .padding(.horizontal, 6)
         .padding(.vertical, 2.5)
-        .background(badgeColor.opacity(colorScheme == .dark ? 0.16 : 0.12))
+        .background(badgeColor.opacity(activeColorScheme == .dark ? 0.16 : 0.12))
         .clipShape(Capsule())
     }
 
@@ -147,7 +181,7 @@ struct ContentView: View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Label("100%~10% 放电工况预估", systemImage: "timer")
+                    Label("100%~\(manager.dischargeTargetPercentage)% 放电工况预估", systemImage: "timer")
                         .font(.system(size: 10.5, weight: .bold))
                         .foregroundColor(.orange)
                     Spacer()
@@ -167,7 +201,7 @@ struct ContentView: View {
                             .foregroundColor(manager.estimatedRemainingMinutes > 0 ? .orange : .secondary)
                     }
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("区间总工时 (100%~10%)")
+                        Text("区间总工时预估")
                             .font(.system(size: 8.5))
                             .foregroundColor(.secondary)
                         Text(manager.totalDischargeRuntimeMinutes > 0 ? "\(manager.totalDischargeRuntimeMinutes / 60)h \(manager.totalDischargeRuntimeMinutes % 60)m" : "--")
@@ -185,10 +219,9 @@ struct ContentView: View {
                     }
                 }
             }
-            .padding(9)
-            .modernGlassCard(colorScheme: colorScheme)
+            .padding(10)
+            .modernGlassCard(colorScheme: activeColorScheme)
 
-            // 右卡片：多周期加权真实健康度与实测容量
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Label("真实容量与健康度 (多周期评定)", systemImage: "gauge.with.needle.fill")
@@ -235,8 +268,8 @@ struct ContentView: View {
                     }
                 }
             }
-            .padding(9)
-            .modernGlassCard(colorScheme: colorScheme)
+            .padding(10)
+            .modernGlassCard(colorScheme: activeColorScheme)
         }
     }
 
@@ -245,16 +278,16 @@ struct ContentView: View {
         HStack(spacing: 8) {
             let dischargePoints = manager.dischargeCurvePoints.isEmpty ? manager.chartDisplayPoints : manager.dischargeCurvePoints
             PrecisionScopeCard(
-                title: manager.currentPhase == .discharging ? "放电特性曲线 (100%~10%)" : "电量走势 (SOC)",
+                title: manager.currentPhase == .discharging ? "放电特性曲线 (100%~\(manager.dischargeTargetPercentage)%)" : "电量走势 (SOC)",
                 badgeValue: "\(manager.currentPercentage)%",
                 badgeUnit: "SOC",
                 tint: appTheme.color,
                 yDomain: 0...100,
                 unitSuffix: "%",
-                yStepValues: [10, 50, 100],
+                yStepValues: [Double(manager.dischargeTargetPercentage), 50, 100],
                 points: dischargePoints,
                 valueKeyPath: \.percentage,
-                colorScheme: colorScheme
+                colorScheme: activeColorScheme
             )
 
             let maxPower = max(35.0, (manager.chartDisplayPoints.map(\.power).max() ?? 20.0) + 5.0)
@@ -268,12 +301,12 @@ struct ContentView: View {
                 yStepValues: [0, maxPower * 0.5, maxPower],
                 points: manager.chartDisplayPoints,
                 valueKeyPath: \.power,
-                colorScheme: colorScheme
+                colorScheme: activeColorScheme
             )
         }
     }
 
-    // MARK: - 4. 底部控制栏（含设置按钮）
+    // MARK: - 4. 底部控制栏
     private var footerControlDeck: some View {
         HStack(spacing: 10) {
             HStack(spacing: 6) {
@@ -295,9 +328,13 @@ struct ContentView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color(nsColor: .controlBackgroundColor).opacity(colorScheme == .dark ? 0.6 : 0.75))
+            .background(
+                activeColorScheme == .dark
+                    ? Color(nsColor: .controlBackgroundColor).opacity(0.6)
+                    : Color(nsColor: .controlBackgroundColor)
+            )
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(Color.primary.opacity(0.06), lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(Color.primary.opacity(0.08), lineWidth: 0.8))
 
             Spacer()
 
@@ -342,7 +379,7 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - 5. 弹性控制台日志区域
+    // MARK: - 5. 弹性控制台日志区域（优化浅色底色与对比度）
     private var collapsibleConsoleSection: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
@@ -355,7 +392,7 @@ struct ContentView: View {
                 Spacer()
                 Text("\(manager.logHistory.count) 条事件")
                     .font(.system(size: 9, design: .monospaced))
-                    .foregroundColor(.secondary.opacity(0.7))
+                    .foregroundColor(.secondary.opacity(0.8))
             }
 
             ScrollViewReader { proxy in
@@ -364,16 +401,23 @@ struct ContentView: View {
                         ForEach(Array(manager.logHistory.enumerated()), id: \.offset) { index, log in
                             Text(log)
                                 .font(.system(size: 9.5, design: .monospaced))
-                                .foregroundColor(Color.primary.opacity(0.88))
+                                .foregroundColor(Color.primary.opacity(0.9))
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .id(index)
                         }
                     }
                     .padding(8)
                 }
-                .background(Color(nsColor: .textBackgroundColor).opacity(colorScheme == .dark ? 0.35 : 0.45))
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Color.primary.opacity(0.06), lineWidth: 1))
+                .background(
+                    activeColorScheme == .dark
+                        ? Color(nsColor: .textBackgroundColor).opacity(0.35)
+                        : Color(nsColor: .controlBackgroundColor).opacity(0.85)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(activeColorScheme == .dark ? 0.08 : 0.07), lineWidth: 0.8)
+                )
                 .onChange(of: manager.logHistory.count) { newCount in
                     if newCount > 0 {
                         withAnimation {
@@ -396,7 +440,7 @@ private struct DynamicPowerGauge: View {
     var body: some View {
         ZStack {
             Circle()
-                .stroke(Color.primary.opacity(0.06), lineWidth: 5)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 5)
 
             Circle()
                 .trim(from: 0, to: CGFloat(max(0.01, min(1.0, Double(percentage) / 100.0))))
@@ -482,7 +526,7 @@ struct PrecisionScopeCard: View {
                     }
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1.5)
-                    .background(tint.opacity(colorScheme == .dark ? 0.18 : 0.1))
+                    .background(tint.opacity(colorScheme == .dark ? 0.18 : 0.12))
                     .clipShape(RoundedRectangle(cornerRadius: 4))
                 }
             }
@@ -497,7 +541,7 @@ struct PrecisionScopeCard: View {
                         .interpolationMethod(.catmullRom)
                         .foregroundStyle(
                             LinearGradient(
-                                colors: [tint.opacity(colorScheme == .dark ? 0.35 : 0.22), tint.opacity(0.0)],
+                                colors: [tint.opacity(colorScheme == .dark ? 0.35 : 0.20), tint.opacity(0.0)],
                                 startPoint: .top,
                                 endPoint: .bottom
                             )
@@ -535,7 +579,7 @@ struct PrecisionScopeCard: View {
                 .chartYAxis {
                     AxisMarks(position: .leading, values: yStepValues) { val in
                         AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
-                            .foregroundStyle(Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.06))
+                            .foregroundStyle(Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.08))
                         AxisValueLabel {
                             if let d = val.as(Double.self) {
                                 Text("\(Int(d))\(unitSuffix)")
@@ -548,7 +592,7 @@ struct PrecisionScopeCard: View {
                 .chartXAxis {
                     AxisMarks(values: .automatic(desiredCount: 4)) { _ in
                         AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
-                            .foregroundStyle(Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.05))
+                            .foregroundStyle(Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.06))
                         AxisValueLabel()
                             .font(.system(size: 7.5))
                             .foregroundStyle(Color.secondary)
@@ -598,7 +642,7 @@ struct PrecisionScopeCard: View {
                     .padding(.vertical, 2)
                     .background(Color(nsColor: .windowBackgroundColor).opacity(0.96))
                     .clipShape(RoundedRectangle(cornerRadius: 4))
-                    .shadow(color: Color.black.opacity(0.15), radius: 3, x: 0, y: 1)
+                    .shadow(color: Color.black.opacity(0.12), radius: 3, x: 0, y: 1)
                     .offset(x: min(max(posX - 45, 4), 190), y: 2)
                     .allowsHitTesting(false)
                 }
@@ -607,13 +651,20 @@ struct PrecisionScopeCard: View {
         .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(colorScheme == .dark ? Color(nsColor: .quaternaryLabelColor).opacity(0.35) : Color(nsColor: .controlBackgroundColor))
+                .fill(
+                    colorScheme == .dark
+                        ? Color(nsColor: .quaternaryLabelColor).opacity(0.35)
+                        : Color(nsColor: .controlBackgroundColor)
+                )
         )
         .overlay(
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .strokeBorder(colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.04), lineWidth: 1)
+                .strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.07 : 0.06), lineWidth: 0.8)
         )
-        .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.15 : 0.02), radius: 3, x: 0, y: 1)
+        .shadow(
+            color: Color.black.opacity(colorScheme == .dark ? 0.15 : 0.03),
+            radius: 3, x: 0, y: 1
+        )
     }
 
     private func updateProbeLocation(at location: CGPoint, proxy: ChartProxy, geometry: GeometryProxy) {
@@ -651,22 +702,31 @@ struct TelemetryGridItem: View {
     }
 }
 
-// MARK: - 玻璃质感圆角卡片修饰器
+// MARK: - 高级双模卡片修饰器
 extension View {
     func modernGlassCard(colorScheme: ColorScheme) -> some View {
         self
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor))
+                    .fill(
+                        colorScheme == .dark
+                            ? Color(nsColor: .controlBackgroundColor)
+                            : Color(nsColor: .windowBackgroundColor)
+                    )
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .strokeBorder(
-                        colorScheme == .dark ? Color.white.opacity(0.07) : Color.black.opacity(0.04),
-                        lineWidth: 1
+                        Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.07),
+                        lineWidth: 0.8
                     )
             )
-            .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.2 : 0.03), radius: 4, x: 0, y: 1)
+            .shadow(
+                color: Color.black.opacity(colorScheme == .dark ? 0.2 : 0.04),
+                radius: colorScheme == .dark ? 4 : 5,
+                x: 0,
+                y: colorScheme == .dark ? 1 : 2
+            )
     }
 }
 
@@ -787,11 +847,12 @@ struct HistoryManagementView: View {
     }
 }
 
-// MARK: - 新增设置视图 (SettingsView)
+// MARK: - 新增设置视图 (包含深浅色切换及细调选项)
 struct SettingsView: View {
     @ObservedObject var manager: BatteryCalibrationManager
     @Binding var isPresented: Bool
     @AppStorage("appThemeColor") private var appTheme: AppThemeColor = .blue
+    @AppStorage("appAppearanceMode") private var appearanceMode: AppAppearanceMode = .auto
     
     var body: some View {
         VStack(spacing: 0) {
@@ -813,7 +874,14 @@ struct SettingsView: View {
             Divider()
             
             Form {
-                Section(header: Text("界面与交互风格").font(.subheadline).bold()) {
+                Section(header: Text("外观模式与界面主题").font(.subheadline).bold()) {
+                    Picker("外观模式", selection: $appearanceMode) {
+                        ForEach(AppAppearanceMode.allCases) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
                     Picker("应用强调色", selection: $appTheme) {
                         ForEach(AppThemeColor.allCases) { theme in
                             HStack {
@@ -824,6 +892,18 @@ struct SettingsView: View {
                         }
                     }
                     .pickerStyle(.segmented)
+                }
+
+                Section(header: Text("放电标定与测试细调").font(.subheadline).bold()) {
+                    Picker("放电终止目标电量", selection: $manager.dischargeTargetPercentage) {
+                        Text("5% (极限深度校准)").tag(5)
+                        Text("10% (标准推荐)").tag(10)
+                        Text("15% (轻度保养)").tag(15)
+                        Text("20% (保护电芯)").tag(20)
+                    }
+                    
+                    Toggle("阶段切换时播放提示音", isOn: $manager.soundAlertEnabled)
+                    Toggle("校准完成自动导出报告到桌面", isOn: $manager.autoExportReports)
                 }
                 
                 Section(header: Text("安全保护与阈值控制").font(.subheadline).bold()) {
@@ -863,7 +943,7 @@ struct SettingsView: View {
             .formStyle(.grouped)
             .padding(10)
         }
-        .frame(minWidth: 500, minHeight: 460)
+        .frame(minWidth: 520, minHeight: 510)
     }
 }
 
