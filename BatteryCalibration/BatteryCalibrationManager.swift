@@ -79,6 +79,8 @@ enum CalibrationPhase: String {
     case chargingToFull = "充电中 (至 100%)"
     case discharging = "放电中 (至 10%)"
     case rechargingToFull = "再充中 (至 100%)"
+    case holdingAtFull = "保持中 (饱和静置)"
+    case dischargingToBuffer = "回落放电中 (至 80%)"
     case completed = "校准完成"
 }
 
@@ -123,6 +125,10 @@ final class BatteryCalibrationManager: ObservableObject {
     
     @Published var internalResistanceMilliohm: Double = 0.0
     
+    // MARK: - 电芯平衡与单体压差
+    @Published var cellVoltages: [Double] = []
+    @Published var cellVoltageDeltaMillivolts: Double = 0.0
+    
     @Published var stressMode: DischargeStressMode = .balanced {
         didSet {
             if isSessionRunning && currentPhase == .discharging {
@@ -159,6 +165,10 @@ final class BatteryCalibrationManager: ObservableObject {
     @Published var isThermalCutoffActive: Bool = false
     @Published var isFastChargeThrottlingActive: Bool = false
     
+    // MARK: - SMC 硬件控制状态
+    @Published var isHardwareControlAvailable: Bool = false
+    @Published var isChargingInhibitedByApp: Bool = false
+    
     @Published var historyRecords: [CalibrationHistoryRecord] = []
     
     // 开机自启动状态
@@ -191,6 +201,8 @@ final class BatteryCalibrationManager: ObservableObject {
     
     private var sessionStartDate: Date?
     private var dischargePhaseStartDate: Date?
+    private var holdingStartDate: Date?
+    private let holdingDurationSeconds: TimeInterval = 600
     private var startDischargePercentage: Int = 100
     private(set) var isSessionRunning: Bool = false
     private var downsampleCounter: Int = 0
@@ -218,6 +230,7 @@ final class BatteryCalibrationManager: ObservableObject {
         fetchHardwareInfo()
         fetchBatteryDetails()
         checkAlDenteStatus()
+        self.isHardwareControlAvailable = BatteryControlClient.shared.isDaemonRegistered
         checkLaunchAtLoginStatus()
         self.historyRecords = HistoryStorageManager.shared.loadHistory()
         recalculateMultiSessionHealth()
@@ -233,6 +246,24 @@ final class BatteryCalibrationManager: ObservableObject {
             IOPMAssertionRelease(assertionID)
         }
         ScreenBrightnessController.shared.restoreBrightness()
+    }
+    
+    // MARK: - SMC 硬件充电阻断控制
+    private func applyHardwareChargingInhibit(enabled: Bool) {
+        guard BatteryControlClient.shared.isDaemonRegistered else {
+            appendLog("SMC 控制跳过: 特权 Helper 服务未激活")
+            return
+        }
+        
+        Task {
+            do {
+                _ = try await BatteryControlClient.shared.setInhibitCharging(enabled: enabled)
+                self.isChargingInhibitedByApp = enabled
+                self.appendLog(enabled ? "SMC: 已强制阻断供电充电 (旁路放电开启)" : "SMC: 已解除充电限制 (恢复正常供电/充电)")
+            } catch {
+                self.appendLog("SMC 充电写入异常: \(error.localizedDescription)")
+            }
+        }
     }
     
     // MARK: - 开机自启动设置
@@ -359,9 +390,10 @@ final class BatteryCalibrationManager: ObservableObject {
                 appendLog("满电已就绪，进入放电校准阶段 (当前 \(currentPercentage)%)，启动负载策略 [\(stressMode.rawValue)]...")
                 sendLocalNotification(
                     title: "放电阶段已开始",
-                    body: "AlDente 或 App 已开始电池放电过程，当前电量 \(currentPercentage)%"
+                    body: "校准已开始电池放电过程，当前电量 \(currentPercentage)%"
                 )
                 startStressLoad()
+                applyHardwareChargingInhibit(enabled: true)
             }
         } else if currentPhase == .discharging {
             dischargeCurvePoints.append(point)
@@ -408,12 +440,13 @@ final class BatteryCalibrationManager: ObservableObject {
                 appendLog("放电达到目标阈值 (\(dischargeTargetPercentage)%)，放电耗时: \(h)小时\(m)分钟，平均功耗: \(String(format: "%.2f", dischargeAveragePower)) W")
                 
                 stopStressLoad()
+                applyHardwareChargingInhibit(enabled: false)
                 currentPhase = .rechargingToFull
                 applyFastChargingOptimization(enable: true)
                 
                 sendLocalNotification(
                     title: "放电阶段已完成",
-                    body: "电池已放电至目标阈值，AlDente 将开始重新回充至 100%"
+                    body: "电池已放电至目标阈值，将开始重新回充至 100%"
                 )
             }
         } else if currentPhase == .rechargingToFull {
@@ -426,6 +459,28 @@ final class BatteryCalibrationManager: ObservableObject {
             
             if currentPercentage >= 100 && signedAmperage < 0.15 {
                 applyFastChargingOptimization(enable: false)
+                currentPhase = .holdingAtFull
+                holdingStartDate = Date()
+                appendLog("电池已充饱至 100%，进入保持沉淀阶段 (持续静置 10 分钟以校准极化电压)...")
+                sendLocalNotification(
+                    title: "电池已充满",
+                    body: "电池达到 100% 满电，正在进行静置保持。"
+                )
+            }
+        } else if currentPhase == .holdingAtFull {
+            if let start = holdingStartDate, now.timeIntervalSince(start) >= holdingDurationSeconds {
+                appendLog("保持静置阶段结束，阻断充电并启动放电回落至 80% 安全储存电量...")
+                currentPhase = .dischargingToBuffer
+                applyHardwareChargingInhibit(enabled: true)
+                sendLocalNotification(
+                    title: "开始回落放电",
+                    body: "电池正在降至 80% 的长期健康存储电量。"
+                )
+            }
+        } else if currentPhase == .dischargingToBuffer {
+            if currentPercentage <= 80 {
+                appendLog("电量已安全回落至 80%，恢复供电控制，校准全流程结束。")
+                applyHardwareChargingInhibit(enabled: false)
                 finishCalibration()
             }
         }
@@ -524,6 +579,7 @@ final class BatteryCalibrationManager: ObservableObject {
         sessionRecordedPoints.removeAll()
         dischargeCurvePoints.removeAll()
         sessionStartDate = Date()
+        holdingStartDate = nil
         
         enablePreventSleep()
         appendLog(">>> 校准监测会话已启动 <<<")
@@ -534,6 +590,7 @@ final class BatteryCalibrationManager: ObservableObject {
             dischargePhaseStartDate = Date()
             appendLog("系统正处于放电状态，直接进入放电监测阶段...")
             startStressLoad()
+            applyHardwareChargingInhibit(enabled: true)
         } else {
             currentPhase = .chargingToFull
             dischargePhaseStartDate = nil
@@ -545,18 +602,22 @@ final class BatteryCalibrationManager: ObservableObject {
     func stopCalibrationSession() {
         applyFastChargingOptimization(enable: false)
         stopStressLoad()
+        applyHardwareChargingInhibit(enabled: false)
         disablePreventSleep()
         isSessionRunning = false
         currentPhase = .waitingForTrigger
+        holdingStartDate = nil
         appendLog("校准监测会话已停止")
     }
     
     private func finishCalibration() {
         applyFastChargingOptimization(enable: false)
         stopStressLoad()
+        applyHardwareChargingInhibit(enabled: false)
         disablePreventSleep()
         isSessionRunning = false
         currentPhase = .completed
+        holdingStartDate = nil
         
         let dischargeFormatted = String(format: "%.2f", dischargeEnergyWh)
         let rechargeFormatted = String(format: "%.2f", rechargeEnergyWh)
@@ -693,6 +754,8 @@ final class BatteryCalibrationManager: ObservableObject {
         
         ----------------- 电池物理特性参数 -----------------
         电池直流内阻 (DCIR): \(internalResistanceMilliohm > 0 ? String(format: "%.1f mΩ", internalResistanceMilliohm) : "--")
+        单体电芯电压分布: \(cellVoltages.map { String(format: "%.3fV", $0) }.joined(separator: ", "))
+        单体最大压差 (ΔV): \(String(format: "%.1f mV", cellVoltageDeltaMillivolts))
         放电总净能量: \(dischargeFormatted) Wh (\(String(format: "%.3f", dischargeEnergyAh)) Ah)
         回充总吸收能量: \(rechargeFormatted) Wh (\(String(format: "%.3f", rechargeEnergyAh)) Ah)
         库伦充电效率: \(coulombicFormatted)
@@ -898,9 +961,17 @@ final class BatteryCalibrationManager: ObservableObject {
                     self.currentPercentage = Int((curCap.doubleValue / maxCap.doubleValue) * 100.0)
                 }
                 
+                // 提取单体电芯电压 (Cell Voltage) 与设计容量
                 if let bData = dict["BatteryData"] as? [String: Any] {
                     if let desCap = bData["DesignCapacity"] as? NSNumber {
                         self.designCapacityMAh = desCap.doubleValue
+                    }
+                    if let rawCellArray = bData["CellVoltage"] as? [NSNumber], !rawCellArray.isEmpty {
+                        let parsedCells = rawCellArray.map { $0.doubleValue / 1000.0 }
+                        self.cellVoltages = parsedCells
+                        if let maxV = parsedCells.max(), let minV = parsedCells.min() {
+                            self.cellVoltageDeltaMillivolts = (maxV - minV) * 1000.0
+                        }
                     }
                 } else if let designCap = dict["DesignCapacity"] as? NSNumber {
                     self.designCapacityMAh = designCap.doubleValue
@@ -913,17 +984,14 @@ final class BatteryCalibrationManager: ObservableObject {
                     self.batterySerialNumber = serial
                 }
                 
-                // 5. 原生读取 AppleSmartBattery 温度 (与 AlDente Pro 机制一致)
+                // 5. 原生读取 AppleSmartBattery 温度
                 if let rawTemp = dict["Temperature"] as? NSNumber {
                     let val = rawTemp.doubleValue
                     if val > 20000 {
-                        // 单位: 0.01 K (例如 30215 -> 29.0°C)
                         resolvedTemp = (val / 100.0) - 273.15
                     } else if val > 2000 {
-                        // 单位: 0.1 K (例如 3021 -> 28.95°C)
                         resolvedTemp = (val / 10.0) - 273.15
                     } else if val > 100 && val < 1000 {
-                        // 单位: 0.1 °C (例如 290 -> 29.0°C)
                         resolvedTemp = val / 10.0
                     } else if val > 5 && val < 90 {
                         resolvedTemp = val
@@ -932,7 +1000,6 @@ final class BatteryCalibrationManager: ObservableObject {
             }
         }
         
-        // 降级策略 1: 若 AppleSmartBattery 无温度，尝试 IOPS
         if resolvedTemp == nil {
             if let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
                let list = IOPSCopyPowerSourcesList(snapshot)?.takeRetainedValue() as? [CFTypeRef] {
@@ -952,7 +1019,6 @@ final class BatteryCalibrationManager: ObservableObject {
             }
         }
         
-        // 降级策略 2: 尝试 HID 传感器 (优先匹配真正的 Battery 电芯传感器，避免误取 PMU 供电芯片最高温)
         if resolvedTemp == nil {
             resolvedTemp = fetchBatteryTemperatureViaHID()
         }
@@ -1006,7 +1072,6 @@ final class BatteryCalibrationManager: ObservableObject {
                     let event = eventUnmanaged.takeRetainedValue()
                     let temp = getFloatVal(event, 0x000F0000)
                     if temp > 10.0 && temp < 80.0 {
-                        // 优先匹配真正的电池电芯传感器 (Gas Gauge / Battery)
                         if lower.contains("gas gauge") || lower.contains("battery") {
                             batteryCellTemps.append(temp)
                         } else if lower.contains("tb0t") {
