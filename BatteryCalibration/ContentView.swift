@@ -2,10 +2,10 @@ import SwiftUI
 import Charts
 
 enum AppThemeColor: String, CaseIterable, Identifiable {
-    case blue = "经典蓝"
+    case blue = "科技蓝"
     case orange = "活力橙"
-    case cyan = "工业青"
-    case green = "极客绿"
+    case cyan = "极光青"
+    case green = "健康绿"
     
     var id: String { rawValue }
     
@@ -42,23 +42,30 @@ struct ContentView: View {
     @AppStorage("appThemeColor") private var appTheme: AppThemeColor = .blue
     @AppStorage("appAppearanceMode") private var appearanceMode: AppAppearanceMode = .auto
     @Environment(\.colorScheme) private var systemColorScheme
-
+    
     private var activeColorScheme: ColorScheme {
         appearanceMode.colorScheme ?? systemColorScheme
     }
-
+    
     var body: some View {
         VStack(spacing: 11) {
+            // 1. 顶部集成状态横幅
             headerIntegratedCard
+            
+            // 2. 校准流程 5 节点流水线卡片 (图 2 样式)
+            CalibrationPipelineCard(manager: manager, accentColor: appTheme.color)
+            
+            // 3. Bento 双列指标卡片 (已修复图 1 标题与数据不对齐)
             bentoDoubleDeckGrid
             
-            // 示波图区域
+            // 4. 双通道示波器波形
             dualOscilloscopeSection
                 .frame(minHeight: 140, idealHeight: 170, maxHeight: 280)
             
+            // 5. 底部控制甲板
             footerControlDeck
             
-            // 底部控制台：占据垂直剩余扩展空间
+            // 6. 折叠式遥测终端日志
             collapsibleConsoleSection
                 .frame(minHeight: 90, maxHeight: .infinity)
         }
@@ -77,8 +84,8 @@ struct ContentView: View {
                 .preferredColorScheme(appearanceMode.colorScheme)
         }
     }
-
-    // MARK: - 1. 紧凑集成式状态与遥测卡片
+    
+    // MARK: - 1. 顶部集成状态横幅
     private var headerIntegratedCard: some View {
         HStack(spacing: 14) {
             HStack(spacing: 10) {
@@ -102,15 +109,13 @@ struct ContentView: View {
                         Circle()
                             .fill(manager.isAlDenteRunning ? (manager.isAlDenteCalibrating ? Color.orange : Color.green) : Color.secondary.opacity(0.4))
                             .frame(width: 6, height: 6)
-                        Text(manager.isAlDenteRunning ? (manager.isAlDenteCalibrating ? "AlDente 校准联动中" : "AlDente 待命中") : "未检测到 AlDente")
+                        Text(manager.isAlDenteRunning ? (manager.isAlDenteCalibrating ? "AlDente 标定中" : "AlDente 待命中") : "未检测到 AlDente")
                             .font(.system(size: 9.5))
                             .foregroundColor(.secondary)
                     }
                 }
             }
-
             Spacer()
-
             HStack(spacing: 12) {
                 TelemetryGridItem(title: "总线电压", value: String(format: "%.2f", manager.currentVoltage), unit: "V", color: .primary)
                 Divider().frame(height: 24).opacity(0.2)
@@ -136,25 +141,25 @@ struct ContentView: View {
         .padding(11)
         .modernGlassCard(colorScheme: activeColorScheme)
     }
-
+    
     private var headerStatusText: String {
         if manager.isDischargingOnAC {
-            return "AlDente 旁路校准放电中"
+            return "AlDente 旁路放电中"
         } else if manager.isCharging {
-            return "正在充电"
+            return "充电中"
         } else if manager.isExternalConnected {
             return "已连接电源 (待机)"
         } else {
-            return "电池供电运行中"
+            return "正在由电池供电"
         }
     }
-
+    
     private var amperageColor: Color {
         if manager.signedAmperage < -0.05 { return .orange }
         if manager.signedAmperage > 0.05 { return .green }
         return .primary
     }
-
+    
     private var phaseBadgeView: some View {
         let (badgeColor, icon): (Color, String) = {
             switch manager.currentPhase {
@@ -175,10 +180,11 @@ struct ContentView: View {
         .background(badgeColor.opacity(activeColorScheme == .dark ? 0.16 : 0.12))
         .clipShape(Capsule())
     }
-
-    // MARK: - 2. 双栏 Bento 矩阵
+    
+    // MARK: - 3. Bento 核心双列指标（图 1 对齐修复版）
     private var bentoDoubleDeckGrid: some View {
         HStack(spacing: 8) {
+            // 左侧：工况预估
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Label("100%~\(manager.dischargeTargetPercentage)% 放电工况预估", systemImage: "timer")
@@ -191,28 +197,37 @@ struct ContentView: View {
                             .foregroundColor(.orange)
                     }
                 }
-                HStack(alignment: .bottom, spacing: 14) {
-                    VStack(alignment: .leading, spacing: 1) {
+                
+                HStack(alignment: .lastTextBaseline, spacing: 0) {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text("预估剩余放电时间")
                             .font(.system(size: 8.5))
                             .foregroundColor(.secondary)
+                            .lineLimit(1)
                         Text(manager.estimatedRemainingMinutes > 0 ? "\(manager.estimatedRemainingMinutes / 60)h \(manager.estimatedRemainingMinutes % 60)m" : "--")
-                            .font(.system(size: 16, weight: .heavy, design: .rounded))
+                            .font(.system(size: 15, weight: .heavy, design: .rounded))
                             .foregroundColor(manager.estimatedRemainingMinutes > 0 ? .orange : .secondary)
                     }
-                    VStack(alignment: .leading, spacing: 1) {
+                    .frame(minWidth: 100, alignment: .leading)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
                         Text("区间总工时预估")
                             .font(.system(size: 8.5))
                             .foregroundColor(.secondary)
+                            .lineLimit(1)
                         Text(manager.totalDischargeRuntimeMinutes > 0 ? "\(manager.totalDischargeRuntimeMinutes / 60)h \(manager.totalDischargeRuntimeMinutes % 60)m" : "--")
-                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
                             .foregroundColor(.primary)
                     }
+                    .frame(minWidth: 100, alignment: .leading)
+                    
                     Spacer()
-                    VStack(alignment: .trailing, spacing: 1) {
+                    
+                    VStack(alignment: .trailing, spacing: 2) {
                         Text("平均功耗")
                             .font(.system(size: 8.5))
                             .foregroundColor(.secondary)
+                            .lineLimit(1)
                         Text(String(format: "%.1f W", manager.dischargeAveragePower))
                             .font(.system(size: 13, weight: .semibold, design: .monospaced))
                             .foregroundColor(.primary)
@@ -221,7 +236,8 @@ struct ContentView: View {
             }
             .padding(10)
             .modernGlassCard(colorScheme: activeColorScheme)
-
+            
+            // 右侧：健康度与容量
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Label("真实容量与健康度 (多周期评定)", systemImage: "gauge.with.needle.fill")
@@ -229,7 +245,7 @@ struct ContentView: View {
                         .foregroundColor(appTheme.color)
                     Spacer()
                     if let agg = manager.aggregatedHealth {
-                        Text("基于 \(agg.validSessionsCount) 次校准 (置信度 \(Int(agg.confidenceScore))%)")
+                        Text("加权 \(agg.validSessionsCount) 次 (置信度 \(Int(agg.confidenceScore))%)")
                             .font(.system(size: 8.5, weight: .medium))
                             .foregroundColor(.secondary)
                     } else {
@@ -238,30 +254,39 @@ struct ContentView: View {
                             .foregroundColor(.secondary)
                     }
                 }
-                HStack(alignment: .bottom, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(manager.aggregatedHealth != nil ? "综合真实容量" : "单次实测容量")
+                
+                HStack(alignment: .lastTextBaseline, spacing: 0) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(manager.aggregatedHealth != nil ? "多周期真实容量" : "单次实测容量")
                             .font(.system(size: 8.5))
                             .foregroundColor(.secondary)
+                            .lineLimit(1)
                         let displayCap = manager.aggregatedHealth?.trueCapacityMAh ?? manager.calculatedCapacityMAh
                         Text(displayCap > 0 ? "\(Int(displayCap)) mAh" : "--")
-                            .font(.system(size: 16, weight: .heavy, design: .rounded))
+                            .font(.system(size: 15, weight: .heavy, design: .rounded))
                             .foregroundColor(displayCap > 0 ? appTheme.color : .secondary)
                     }
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(manager.aggregatedHealth != nil ? "真实健康度 (SOH)" : "单次健康度")
+                    .frame(minWidth: 100, alignment: .leading)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(manager.aggregatedHealth != nil ? "多周期真实健康度" : "单次健康度")
                             .font(.system(size: 8.5))
                             .foregroundColor(.secondary)
+                            .lineLimit(1)
                         let displayHealth = manager.aggregatedHealth?.trueHealthPercentage ?? manager.batteryHealthPercentage
                         Text(displayHealth > 0 ? String(format: "%.1f%%", displayHealth) : "--")
-                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
                             .foregroundColor(displayHealth >= 80 ? .green : (displayHealth > 0 ? .orange : .secondary))
                     }
+                    .frame(minWidth: 100, alignment: .leading)
+                    
                     Spacer()
-                    VStack(alignment: .trailing, spacing: 1) {
+                    
+                    VStack(alignment: .trailing, spacing: 2) {
                         Text("直流内阻 (DCIR)")
                             .font(.system(size: 8.5))
                             .foregroundColor(.secondary)
+                            .lineLimit(1)
                         Text(manager.internalResistanceMilliohm > 0 ? String(format: "%.1f mΩ", manager.internalResistanceMilliohm) : "--")
                             .font(.system(size: 12, weight: .semibold, design: .monospaced))
                             .foregroundColor(.primary)
@@ -272,13 +297,13 @@ struct ContentView: View {
             .modernGlassCard(colorScheme: activeColorScheme)
         }
     }
-
-    // MARK: - 3. 示波器区域
+    
+    // MARK: - 4. 示波器区域
     private var dualOscilloscopeSection: some View {
         HStack(spacing: 8) {
             let dischargePoints = manager.dischargeCurvePoints.isEmpty ? manager.chartDisplayPoints : manager.dischargeCurvePoints
             PrecisionScopeCard(
-                title: manager.currentPhase == .discharging ? "放电特性曲线 (100%~\(manager.dischargeTargetPercentage)%)" : "电量走势 (SOC)",
+                title: manager.currentPhase == .discharging ? "放电衰减曲线 (100%~\(manager.dischargeTargetPercentage)%)" : "实时电量趋势 (SOC)",
                 badgeValue: "\(manager.currentPercentage)%",
                 badgeUnit: "SOC",
                 tint: appTheme.color,
@@ -289,7 +314,7 @@ struct ContentView: View {
                 valueKeyPath: \.percentage,
                 colorScheme: activeColorScheme
             )
-
+            
             let maxPower = max(35.0, (manager.chartDisplayPoints.map(\.power).max() ?? 20.0) + 5.0)
             PrecisionScopeCard(
                 title: "瞬时充放功率",
@@ -305,8 +330,8 @@ struct ContentView: View {
             )
         }
     }
-
-    // MARK: - 4. 底部控制栏
+    
+    // MARK: - 5. 底部控制甲板
     private var footerControlDeck: some View {
         HStack(spacing: 10) {
             HStack(spacing: 6) {
@@ -318,6 +343,7 @@ struct ContentView: View {
                     .foregroundColor(.secondary)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
+                
                 Picker("", selection: $manager.stressMode) {
                     ForEach(DischargeStressMode.allCases) { mode in
                         Text(mode.rawValue).tag(mode)
@@ -335,12 +361,12 @@ struct ContentView: View {
             )
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(Color.primary.opacity(0.08), lineWidth: 0.8))
-
+            
             Spacer()
-
+            
             if manager.currentPhase == .waitingForTrigger || manager.currentPhase == .completed {
                 Button(action: { manager.startCalibrationSession() }) {
-                    Label("启动校准流程", systemImage: "play.fill")
+                    Label("启动校准", systemImage: "play.fill")
                         .font(.system(size: 11.5, weight: .bold))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 3)
@@ -357,7 +383,7 @@ struct ContentView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
             }
-
+            
             Button(action: { isShowingHistorySheet = true }) {
                 Label("历史归档", systemImage: "clock.arrow.circlepath")
                     .font(.system(size: 11, weight: .medium))
@@ -366,7 +392,6 @@ struct ContentView: View {
             }
             .buttonStyle(.bordered)
             
-            // 设置按钮 (⚙️)
             Button(action: { isShowingSettingsSheet = true }) {
                 Image(systemName: "gearshape.fill")
                     .font(.system(size: 12, weight: .medium))
@@ -375,11 +400,11 @@ struct ContentView: View {
                     .padding(.vertical, 3)
             }
             .buttonStyle(.bordered)
-            .help("首选项与高级配置")
+            .help("系统与策略偏好设置")
         }
     }
-
-    // MARK: - 5. 弹性控制台日志区域（优化浅色底色与对比度）
+    
+    // MARK: - 6. 折叠式终端视图
     private var collapsibleConsoleSection: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
@@ -394,7 +419,7 @@ struct ContentView: View {
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(.secondary.opacity(0.8))
             }
-
+            
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 3) {
@@ -430,18 +455,152 @@ struct ContentView: View {
     }
 }
 
-// MARK: - 动态环形进度条
+// MARK: - 图 2 样式：校准流水线卡片 (CalibrationPipelineCard)
+private struct CalibrationPipelineCard: View {
+    @ObservedObject var manager: BatteryCalibrationManager
+    let accentColor: Color
+    
+    var body: some View {
+        HStack(spacing: 0) {
+            stageItem(
+                title: "充电至\n100%",
+                iconType: .charge100,
+                isActive: manager.currentPhase == .chargingToFull
+            )
+            
+            arrowDivider
+            
+            stageItem(
+                title: "放电至 \(manager.dischargeTargetPercentage)%",
+                iconType: .discharge10,
+                isActive: manager.currentPhase == .discharging
+            )
+            
+            arrowDivider
+            
+            stageItem(
+                title: "充电至\n100%",
+                iconType: .charge100,
+                isActive: manager.currentPhase == .rechargingToFull
+            )
+            
+            arrowDivider
+            
+            stageItem(
+                title: "保持",
+                iconType: .hold,
+                isActive: false
+            )
+            
+            arrowDivider
+            
+            stageItem(
+                title: "放电到\n80%",
+                iconType: .discharge80,
+                isActive: false
+            )
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 14)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.65))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.8)
+        )
+    }
+    
+    private enum PipelineIconType {
+        case charge100
+        case discharge10
+        case hold
+        case discharge80
+    }
+    
+    private func stageItem(title: String, iconType: PipelineIconType, isActive: Bool) -> some View {
+        VStack(spacing: 5) {
+            stageIcon(for: iconType, isActive: isActive)
+            
+            Text(title)
+                .font(.system(size: 9.5, weight: isActive ? .bold : .medium))
+                .multilineTextAlignment(.center)
+                .foregroundColor(isActive ? .primary : .secondary)
+                .lineSpacing(-1)
+        }
+        .frame(maxWidth: .infinity)
+    }
+    
+    @ViewBuilder
+    private func stageIcon(for type: PipelineIconType, isActive: Bool) -> some View {
+        ZStack {
+            switch type {
+            case .charge100:
+                ZStack {
+                    Image(systemName: "battery.100")
+                        .font(.system(size: 20))
+                        .foregroundColor(isActive ? .green : .secondary.opacity(0.7))
+                    Image(systemName: "plus")
+                        .font(.system(size: 8, weight: .heavy))
+                        .foregroundColor(isActive ? .green : .secondary.opacity(0.7))
+                        .offset(x: -1.5)
+                }
+            case .discharge10:
+                ZStack {
+                    Image(systemName: "battery.25")
+                        .font(.system(size: 20))
+                        .foregroundColor(isActive ? .orange : .secondary.opacity(0.7))
+                    Image(systemName: "minus")
+                        .font(.system(size: 8, weight: .heavy))
+                        .foregroundColor(isActive ? .orange : .secondary.opacity(0.7))
+                        .offset(x: -1.5)
+                }
+            case .hold:
+                ZStack {
+                    Image(systemName: "battery.100")
+                        .font(.system(size: 20))
+                        .foregroundColor(.blue.opacity(0.85))
+                    Image(systemName: "pause.fill")
+                        .font(.system(size: 7, weight: .heavy))
+                        .foregroundColor(.blue)
+                        .offset(x: -1.5)
+                }
+            case .discharge80:
+                ZStack {
+                    Image(systemName: "battery.75")
+                        .font(.system(size: 20))
+                        .foregroundColor(.orange.opacity(0.85))
+                    Image(systemName: "minus")
+                        .font(.system(size: 8, weight: .heavy))
+                        .foregroundColor(.orange.opacity(0.85))
+                        .offset(x: -1.5)
+                }
+            }
+        }
+        .frame(height: 22)
+        .scaleEffect(isActive ? 1.15 : 1.0)
+    }
+    
+    private var arrowDivider: some View {
+        Image(systemName: "arrow.right")
+            .font(.system(size: 10, weight: .bold))
+            .foregroundColor(.secondary.opacity(0.4))
+            .frame(width: 22)
+    }
+}
+
+// MARK: - 动态环形电量仪
 private struct DynamicPowerGauge: View {
     let percentage: Int
     let isCharging: Bool
     let isDischarging: Bool
     var accentColor: Color = .blue
-
+    
     var body: some View {
         ZStack {
             Circle()
                 .stroke(Color.primary.opacity(0.08), lineWidth: 5)
-
             Circle()
                 .trim(from: 0, to: CGFloat(max(0.01, min(1.0, Double(percentage) / 100.0))))
                 .stroke(
@@ -457,7 +616,6 @@ private struct DynamicPowerGauge: View {
                     color: (isCharging ? Color.green : (percentage <= 20 ? Color.red : accentColor)).opacity(0.35),
                     radius: 3
                 )
-
             VStack(spacing: 0) {
                 Image(systemName: isCharging ? "bolt.fill" : (isDischarging ? "flame.fill" : "battery.100"))
                     .font(.system(size: 11, weight: .bold))
@@ -471,7 +629,7 @@ private struct DynamicPowerGauge: View {
     }
 }
 
-// MARK: - 示波器卡片视图
+// MARK: - 精准示波卡片
 struct PrecisionScopeCard: View {
     let title: String
     let badgeValue: String
@@ -483,10 +641,10 @@ struct PrecisionScopeCard: View {
     let points: [CalibrationDataPoint]
     let valueKeyPath: KeyPath<CalibrationDataPoint, Double>
     let colorScheme: ColorScheme
-
+    
     @State private var selectedPoint: CalibrationDataPoint? = nil
     @State private var indicatorXPosition: CGFloat? = nil
-
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -499,9 +657,7 @@ struct PrecisionScopeCard: View {
                         .font(.system(size: 11, weight: .bold, design: .rounded))
                         .foregroundColor(.primary.opacity(0.85))
                 }
-
                 Spacer()
-
                 if let probe = selectedPoint {
                     HStack(spacing: 4) {
                         Text(probe.timestamp, style: .time)
@@ -530,7 +686,7 @@ struct PrecisionScopeCard: View {
                     .clipShape(RoundedRectangle(cornerRadius: 4))
                 }
             }
-
+            
             ZStack(alignment: .topLeading) {
                 Chart {
                     ForEach(points) { pt in
@@ -546,7 +702,7 @@ struct PrecisionScopeCard: View {
                                 endPoint: .bottom
                             )
                         )
-
+                        
                         LineMark(
                             x: .value("时间", pt.timestamp),
                             y: .value("数值", pt[keyPath: valueKeyPath])
@@ -555,21 +711,22 @@ struct PrecisionScopeCard: View {
                         .lineStyle(StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
                         .foregroundStyle(tint)
                     }
-
+                    
                     if let probe = selectedPoint {
-                        RuleMark(x: .value("探针", probe.timestamp))
+                        RuleMark(x: .value("游标", probe.timestamp))
                             .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
                             .foregroundStyle(Color.primary.opacity(0.5))
+                        
                         PointMark(
-                            x: .value("探针点", probe.timestamp),
-                            y: .value("探针值", probe[keyPath: valueKeyPath])
+                            x: .value("游标", probe.timestamp),
+                            y: .value("数值", probe[keyPath: valueKeyPath])
                         )
                         .symbolSize(36)
                         .foregroundStyle(tint)
                     } else if let lastPt = points.last {
                         PointMark(
-                            x: .value("当前点", lastPt.timestamp),
-                            y: .value("当前值", lastPt[keyPath: valueKeyPath])
+                            x: .value("最新", lastPt.timestamp),
+                            y: .value("数值", lastPt[keyPath: valueKeyPath])
                         )
                         .symbolSize(22)
                         .foregroundStyle(tint)
@@ -625,7 +782,7 @@ struct PrecisionScopeCard: View {
                     }
                 }
                 .frame(maxHeight: .infinity)
-
+                
                 if let probe = selectedPoint, let posX = indicatorXPosition {
                     HStack(spacing: 4) {
                         Text(probe.timestamp, style: .time)
@@ -666,7 +823,7 @@ struct PrecisionScopeCard: View {
             radius: 3, x: 0, y: 1
         )
     }
-
+    
     private func updateProbeLocation(at location: CGPoint, proxy: ChartProxy, geometry: GeometryProxy) {
         let plotOriginX = geometry[proxy.plotAreaFrame].origin.x
         let currentX = location.x - plotOriginX
@@ -678,13 +835,13 @@ struct PrecisionScopeCard: View {
     }
 }
 
-// MARK: - 实时遥测指标项
+// MARK: - 基础数值显示项
 struct TelemetryGridItem: View {
     let title: String
     let value: String
     let unit: String
     let color: Color
-
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(title)
@@ -702,7 +859,7 @@ struct TelemetryGridItem: View {
     }
 }
 
-// MARK: - 高级双模卡片修饰器
+// MARK: - 统一拟态容器修饰器
 extension View {
     func modernGlassCard(colorScheme: ColorScheme) -> some View {
         self
@@ -730,26 +887,26 @@ extension View {
     }
 }
 
-// MARK: - 历史归档弹窗
+// MARK: - 历史归档管理弹窗
 struct HistoryManagementView: View {
     @ObservedObject var manager: BatteryCalibrationManager
     @Binding var isPresented: Bool
     @State private var selectedRecordID: UUID? = nil
-
+    
     private var dateFormatter: DateFormatter {
         let df = DateFormatter()
         df.dateStyle = .short
         df.timeStyle = .short
         return df
     }
-
+    
     var body: some View {
         VStack(spacing: 0) {
             HStack {
                 HStack(spacing: 6) {
                     Image(systemName: "clock.arrow.circlepath")
                         .foregroundColor(.blue)
-                    Text("校准历史归档")
+                    Text("标定历史归档")
                         .font(.headline)
                 }
                 Spacer()
@@ -757,7 +914,7 @@ struct HistoryManagementView: View {
                     Button(role: .destructive, action: {
                         manager.clearAllHistory()
                     }) {
-                        Text("清空历史")
+                        Text("清空全部")
                     }
                     .buttonStyle(.bordered)
                 }
@@ -767,16 +924,16 @@ struct HistoryManagementView: View {
                 .keyboardShortcut(.cancelAction)
             }
             .padding(12)
-
+            
             Divider()
-
+            
             if manager.historyRecords.isEmpty {
                 VStack(spacing: 8) {
                     Spacer()
                     Image(systemName: "archivebox")
                         .font(.system(size: 36))
                         .foregroundColor(.secondary.opacity(0.5))
-                    Text("暂无校准记录")
+                    Text("暂无完成的标定记录")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                     Spacer()
@@ -796,7 +953,7 @@ struct HistoryManagementView: View {
                                 .background(record.batteryHealthPercentage >= 80 ? Color.green.opacity(0.15) : Color.orange.opacity(0.15))
                                 .foregroundColor(record.batteryHealthPercentage >= 80 ? .green : .orange)
                                 .clipShape(Capsule())
-
+                            
                             Button(action: {
                                 manager.deleteHistoryRecord(id: record.id)
                             }) {
@@ -805,18 +962,18 @@ struct HistoryManagementView: View {
                             }
                             .buttonStyle(.plain)
                         }
-
+                        
                         HStack(spacing: 12) {
-                            GridItemMetric(title: "实际容量", value: "\(Int(record.calculatedCapacityMAh)) mAh")
-                            GridItemMetric(title: "释放能量", value: "\(String(format: "%.2f", record.dischargeEnergyWh)) Wh")
-                            GridItemMetric(title: "标称容量", value: "\(Int(record.designCapacityMAh)) mAh")
+                            GridItemMetric(title: "测定容量", value: "\(Int(record.calculatedCapacityMAh)) mAh")
+                            GridItemMetric(title: "放电能耗", value: "\(String(format: "%.2f", record.dischargeEnergyWh)) Wh")
+                            GridItemMetric(title: "设计容量", value: "\(Int(record.designCapacityMAh)) mAh")
                             GridItemMetric(title: "库仑效率", value: "\(String(format: "%.1f%%", record.coulombicEfficiency))")
                             GridItemMetric(title: "循环数", value: "\(record.cycleCount) 次")
                             if record.internalResistanceMilliohm > 0 {
                                 GridItemMetric(title: "DCIR", value: "\(String(format: "%.1f mΩ", record.internalResistanceMilliohm))")
                             }
                         }
-
+                        
                         if record.reportFilePath != nil || record.csvFilePath != nil {
                             HStack(spacing: 8) {
                                 if let report = record.reportFilePath, FileManager.default.fileExists(atPath: report) {
@@ -827,7 +984,7 @@ struct HistoryManagementView: View {
                                     .font(.caption2)
                                 }
                                 if let csv = record.csvFilePath, FileManager.default.fileExists(atPath: csv) {
-                                    Button("查看 CSV 数据") {
+                                    Button("查看原始 CSV 数据") {
                                         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: csv)])
                                     }
                                     .buttonStyle(.link)
@@ -847,7 +1004,7 @@ struct HistoryManagementView: View {
     }
 }
 
-// MARK: - 新增设置视图 (包含深浅色切换及细调选项)
+// MARK: - 偏好设置弹窗 (开机自启)
 struct SettingsView: View {
     @ObservedObject var manager: BatteryCalibrationManager
     @Binding var isPresented: Bool
@@ -860,7 +1017,7 @@ struct SettingsView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "gearshape.fill")
                         .foregroundColor(appTheme.color)
-                    Text("偏好设置与质检标定")
+                    Text("偏好设置")
                         .font(.headline)
                 }
                 Spacer()
@@ -874,15 +1031,15 @@ struct SettingsView: View {
             Divider()
             
             Form {
-                Section(header: Text("外观模式与界面主题").font(.subheadline).bold()) {
+                Section(header: Text("外观与主题").font(.subheadline).bold()) {
                     Picker("外观模式", selection: $appearanceMode) {
                         ForEach(AppAppearanceMode.allCases) { mode in
                             Text(mode.rawValue).tag(mode)
                         }
                     }
                     .pickerStyle(.segmented)
-
-                    Picker("应用强调色", selection: $appTheme) {
+                    
+                    Picker("强调色", selection: $appTheme) {
                         ForEach(AppThemeColor.allCases) { theme in
                             HStack {
                                 Circle().fill(theme.color).frame(width: 8, height: 8)
@@ -893,22 +1050,27 @@ struct SettingsView: View {
                     }
                     .pickerStyle(.segmented)
                 }
-
-                Section(header: Text("放电标定与测试细调").font(.subheadline).bold()) {
-                    Picker("放电终止目标电量", selection: $manager.dischargeTargetPercentage) {
-                        Text("5% (极限深度校准)").tag(5)
-                        Text("10% (标准推荐)").tag(10)
-                        Text("15% (轻度保养)").tag(15)
-                        Text("20% (保护电芯)").tag(20)
+                
+                Section(header: Text("通用与自启").font(.subheadline).bold()) {
+                    Toggle("开机自启", isOn: Binding(
+                        get: { manager.isLaunchAtLogin },
+                        set: { manager.setLaunchAtLogin(enabled: $0) }
+                    ))
+                    
+                    Picker("放电截止阈值", selection: $manager.dischargeTargetPercentage) {
+                        Text("5% (深度标定)").tag(5)
+                        Text("10% (推荐标准)").tag(10)
+                        Text("15% (浅层测试)").tag(15)
+                        Text("20% (快速工况)").tag(20)
                     }
                     
-                    Toggle("阶段切换时播放提示音", isOn: $manager.soundAlertEnabled)
-                    Toggle("校准完成自动导出报告到桌面", isOn: $manager.autoExportReports)
+                    Toggle("阶段切换声音提醒", isOn: $manager.soundAlertEnabled)
+                    Toggle("自动导出报告至桌面", isOn: $manager.autoExportReports)
                 }
                 
-                Section(header: Text("安全保护与阈值控制").font(.subheadline).bold()) {
+                Section(header: Text("温控保护机制 (Thermal Cutoff)").font(.subheadline).bold()) {
                     HStack {
-                        Text("放电过热熔断保护")
+                        Text("高温暂停放电保护阈值")
                         Spacer()
                         Text("\(Int(manager.highTempThreshold)) °C")
                             .foregroundColor(.secondary)
@@ -917,7 +1079,7 @@ struct SettingsView: View {
                     Slider(value: $manager.highTempThreshold, in: 38.0...55.0, step: 1.0)
                     
                     HStack {
-                        Text("降温自动恢复阈值")
+                        Text("降温恢复放电阈值")
                         Spacer()
                         Text("\(Int(manager.resumeTempThreshold)) °C")
                             .foregroundColor(.secondary)
@@ -926,31 +1088,31 @@ struct SettingsView: View {
                     Slider(value: $manager.resumeTempThreshold, in: 30.0...42.0, step: 1.0)
                 }
                 
-                Section(header: Text("检测设备与硬件出厂信息").font(.subheadline).bold()) {
-                    LabeledContent("Mac 机型标识", value: manager.hardwareModel)
-                    LabeledContent("电池出厂序列号", value: manager.batterySerialNumber)
-                    LabeledContent("设计标称容量", value: "\(Int(manager.designCapacityMAh)) mAh")
-                    LabeledContent("电池累计循环", value: "\(manager.cycleCount) 次")
+                Section(header: Text("硬件识别").font(.subheadline).bold()) {
+                    LabeledContent("Mac 设备型号", value: manager.hardwareModel)
+                    LabeledContent("电池序列号", value: manager.batterySerialNumber)
+                    LabeledContent("出厂设计容量", value: "\(Int(manager.designCapacityMAh)) mAh")
+                    LabeledContent("循环计数", value: "\(manager.cycleCount) 次")
                 }
                 
-                Section(header: Text("关于与开发者信息").font(.subheadline).bold()) {
-                    LabeledContent("应用程序", value: "Battery Calibration Pro")
-                    LabeledContent("软件版本", value: "1.0.0 (Build 2026.09)")
-                    LabeledContent("联动引擎", value: "AlDente Pro Dual-Pipeline")
+                Section(header: Text("关于").font(.subheadline).bold()) {
+                    LabeledContent("软件名称", value: "Battery Calibration Pro")
+                    LabeledContent("版本", value: "1.0.0 (Universal: Apple Silicon & Intel)")
+                    LabeledContent("标定管线", value: "AlDente Pro Dual-Pipeline")
                     LabeledContent("开发者", value: "Steven Yang (Infinity Computer)")
                 }
             }
             .formStyle(.grouped)
             .padding(10)
         }
-        .frame(minWidth: 520, minHeight: 510)
+        .frame(minWidth: 520, minHeight: 530)
     }
 }
 
 private struct GridItemMetric: View {
     let title: String
     let value: String
-
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(title)
