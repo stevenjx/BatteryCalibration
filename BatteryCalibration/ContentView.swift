@@ -455,7 +455,7 @@ struct ContentView: View {
     }
 }
 
-// MARK: - 图 2 样式：校准流水线卡片 (CalibrationPipelineCard)
+// MARK: - 校准管道卡片 (CalibrationPipelineCard)
 private struct CalibrationPipelineCard: View {
     @ObservedObject var manager: BatteryCalibrationManager
     let accentColor: Color
@@ -471,7 +471,7 @@ private struct CalibrationPipelineCard: View {
             arrowDivider
             
             stageItem(
-                title: "放电至 \(manager.dischargeTargetPercentage)%",
+                title: "放电至\n\(manager.dischargeTargetPercentage)%",
                 iconType: .discharge10,
                 isActive: manager.currentPhase == .discharging
             )
@@ -487,9 +487,9 @@ private struct CalibrationPipelineCard: View {
             arrowDivider
             
             stageItem(
-                title: "保持",
+                title: "保持\n",
                 iconType: .hold,
-                isActive: false
+                isActive: manager.currentPhase == .completed
             )
             
             arrowDivider
@@ -520,73 +520,84 @@ private struct CalibrationPipelineCard: View {
     }
     
     private func stageItem(title: String, iconType: PipelineIconType, isActive: Bool) -> some View {
-        VStack(spacing: 5) {
+        VStack(spacing: 6) {
             stageIcon(for: iconType, isActive: isActive)
+                .frame(width: 32, height: 22, alignment: .center)
             
             Text(title)
                 .font(.system(size: 9.5, weight: isActive ? .bold : .medium))
                 .multilineTextAlignment(.center)
                 .foregroundColor(isActive ? .primary : .secondary)
                 .lineSpacing(-1)
+                .frame(height: 24, alignment: .top)
         }
         .frame(maxWidth: .infinity)
     }
     
     @ViewBuilder
     private func stageIcon(for type: PipelineIconType, isActive: Bool) -> some View {
+        let activeColor: Color = {
+            switch type {
+            case .charge100: return .green
+            case .discharge10, .discharge80: return .orange
+            case .hold: return .blue
+            }
+        }()
+        let inactiveColor = Color.secondary.opacity(0.4)
+        let displayColor = isActive ? activeColor : inactiveColor
+        
         ZStack {
             switch type {
             case .charge100:
                 ZStack {
                     Image(systemName: "battery.100")
                         .font(.system(size: 20))
-                        .foregroundColor(isActive ? .green : .secondary.opacity(0.7))
                     Image(systemName: "plus")
-                        .font(.system(size: 8, weight: .heavy))
-                        .foregroundColor(isActive ? .green : .secondary.opacity(0.7))
-                        .offset(x: -1.5)
+                        .font(.system(size: 7.5, weight: .heavy))
+                        .offset(x: -1.2)
                 }
             case .discharge10:
                 ZStack {
                     Image(systemName: "battery.25")
                         .font(.system(size: 20))
-                        .foregroundColor(isActive ? .orange : .secondary.opacity(0.7))
                     Image(systemName: "minus")
-                        .font(.system(size: 8, weight: .heavy))
-                        .foregroundColor(isActive ? .orange : .secondary.opacity(0.7))
-                        .offset(x: -1.5)
+                        .font(.system(size: 7.5, weight: .heavy))
+                        .offset(x: -1.2)
                 }
             case .hold:
                 ZStack {
                     Image(systemName: "battery.100")
                         .font(.system(size: 20))
-                        .foregroundColor(.blue.opacity(0.85))
                     Image(systemName: "pause.fill")
-                        .font(.system(size: 7, weight: .heavy))
-                        .foregroundColor(.blue)
-                        .offset(x: -1.5)
+                        .font(.system(size: 6.5, weight: .heavy))
+                        .offset(x: -1.2)
                 }
             case .discharge80:
                 ZStack {
                     Image(systemName: "battery.75")
                         .font(.system(size: 20))
-                        .foregroundColor(.orange.opacity(0.85))
                     Image(systemName: "minus")
-                        .font(.system(size: 8, weight: .heavy))
-                        .foregroundColor(.orange.opacity(0.85))
-                        .offset(x: -1.5)
+                        .font(.system(size: 7.5, weight: .heavy))
+                        .offset(x: -1.2)
                 }
             }
         }
-        .frame(height: 22)
+        .foregroundColor(displayColor)
+        .frame(width: 32, height: 22, alignment: .center)
         .scaleEffect(isActive ? 1.15 : 1.0)
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isActive)
     }
     
     private var arrowDivider: some View {
-        Image(systemName: "arrow.right")
-            .font(.system(size: 10, weight: .bold))
-            .foregroundColor(.secondary.opacity(0.4))
-            .frame(width: 22)
+        VStack(spacing: 6) {
+            Image(systemName: "arrow.right")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(.secondary.opacity(0.4))
+                .frame(width: 22, height: 22, alignment: .center)
+            
+            Spacer()
+                .frame(height: 24)
+        }
     }
 }
 

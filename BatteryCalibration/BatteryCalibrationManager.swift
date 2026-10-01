@@ -6,7 +6,7 @@ import AppKit
 import UserNotifications
 import ServiceManagement
 
-// MARK: - 私有 DisplayServices 符号动态链接
+// MARK: - 动态屏幕亮度控制器 (私有框架 DisplayServices)
 private typealias DisplayServicesSetBrightnessFunc = @convention(c) (CGDirectDisplayID, Float) -> Int32
 private typealias DisplayServicesGetBrightnessFunc = @convention(c) (CGDirectDisplayID, UnsafeMutablePointer<Float>) -> Int32
 
@@ -67,18 +67,18 @@ enum DischargeStressMode: String, CaseIterable, Identifiable {
     
     var description: String {
         switch self {
-        case .silent: return "无额外负载 (0% CPU)"
-        case .balanced: return "恒定热耗 ~20W (50% 核心)"
-        case .aggressive: return "极速放电 50W+ (多核满载)"
+        case .silent: return "轻载放电 (0% CPU)"
+        case .balanced: return "恒载放电 ~20W (50% 核心)"
+        case .aggressive: return "快速放电 50W+ (全核心压测)"
         }
     }
 }
 
 enum CalibrationPhase: String {
     case waitingForTrigger = "待机"
-    case chargingToFull = "初充中 (冲至 100%)"
-    case discharging = "标定放电中 (放至 10%)"
-    case rechargingToFull = "回充中 (充至 100%)"
+    case chargingToFull = "充电中 (至 100%)"
+    case discharging = "放电中 (至 10%)"
+    case rechargingToFull = "再充中 (至 100%)"
     case completed = "校准完成"
 }
 
@@ -161,10 +161,10 @@ final class BatteryCalibrationManager: ObservableObject {
     
     @Published var historyRecords: [CalibrationHistoryRecord] = []
     
-    // 开机自启状态
+    // 开机自启动状态
     @Published var isLaunchAtLogin: Bool = false
     
-    // 参数配置
+    // 用户可配置阈值
     @Published var highTempThreshold: Double {
         didSet { UserDefaults.standard.set(highTempThreshold, forKey: "highTempThreshold") }
     }
@@ -235,7 +235,7 @@ final class BatteryCalibrationManager: ObservableObject {
         ScreenBrightnessController.shared.restoreBrightness()
     }
     
-    // MARK: - 开机自启控制
+    // MARK: - 开机自启动设置
     func checkLaunchAtLoginStatus() {
         self.isLaunchAtLogin = (SMAppService.mainApp.status == .enabled)
     }
@@ -249,7 +249,7 @@ final class BatteryCalibrationManager: ObservableObject {
             }
             self.isLaunchAtLogin = (SMAppService.mainApp.status == .enabled)
         } catch {
-            appendLog("开机自启设置失败: \(error.localizedDescription)")
+            appendLog("设置自启动失败: \(error.localizedDescription)")
             self.isLaunchAtLogin = (SMAppService.mainApp.status == .enabled)
         }
     }
@@ -266,7 +266,7 @@ final class BatteryCalibrationManager: ObservableObject {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
             if granted {
                 Task { @MainActor in
-                    self.appendLog("系统通知通道已就绪")
+                    self.appendLog("已获取系统通知权限")
                 }
             }
         }
@@ -328,10 +328,10 @@ final class BatteryCalibrationManager: ObservableObject {
         }
         
         if isAlDenteCalibrating && !isSessionRunning {
-            appendLog("检测到 AlDente Pro 校准触发，接管会话...")
+            appendLog("检测到 AlDente Pro 启动校准，同步启动监测会话...")
             startCalibrationSession()
         } else if !isAlDenteCalibrating && isSessionRunning {
-            appendLog("检测到 AlDente Pro 校准终止...")
+            appendLog("检测到 AlDente Pro 退出校准，同步停止监测会话...")
             stopCalibrationSession()
         }
         
@@ -356,10 +356,10 @@ final class BatteryCalibrationManager: ObservableObject {
                 dischargePhaseStartDate = Date()
                 dischargeCurvePoints.removeAll()
                 dischargeCurvePoints.append(point)
-                appendLog("电量达到 \(currentPercentage)%，开始受控标定放电 [\(stressMode.rawValue)]...")
+                appendLog("满电已就绪，进入放电校准阶段 (当前 \(currentPercentage)%)，启动负载策略 [\(stressMode.rawValue)]...")
                 sendLocalNotification(
-                    title: "放电阶段开始",
-                    body: "AlDente 已切入放电或拔出电源，App 正开始放电能耗积分。"
+                    title: "放电阶段已开始",
+                    body: "AlDente 或 App 已开始电池放电过程，当前电量 \(currentPercentage)%"
                 )
                 startStressLoad()
             }
@@ -404,16 +404,16 @@ final class BatteryCalibrationManager: ObservableObject {
             if currentPercentage <= dischargeTargetPercentage {
                 let h = Int(dischargeElapsedSeconds) / 3600
                 let m = (Int(dischargeElapsedSeconds) % 3600) / 60
-                self.finalDischargeDurationText = "\(h)小时 \(m)分 (均耗 \(String(format: "%.1f", dischargeAveragePower))W)"
-                appendLog("放电抵达截止目标 (\(dischargeTargetPercentage)%)，累计工时: \(h)时\(m)分，均耗: \(String(format: "%.2f", dischargeAveragePower)) W")
+                self.finalDischargeDurationText = "\(h)小时 \(m)分钟 (平均功率 \(String(format: "%.1f", dischargeAveragePower))W)"
+                appendLog("放电达到目标阈值 (\(dischargeTargetPercentage)%)，放电耗时: \(h)小时\(m)分钟，平均功耗: \(String(format: "%.2f", dischargeAveragePower)) W")
                 
                 stopStressLoad()
                 currentPhase = .rechargingToFull
                 applyFastChargingOptimization(enable: true)
                 
                 sendLocalNotification(
-                    title: "放电完成，请连接电源",
-                    body: "电池已放电至目标阈值，请确保连接电源或 AlDente 自动接通回充至 100%"
+                    title: "放电阶段已完成",
+                    body: "电池已放电至目标阈值，AlDente 将开始重新回充至 100%"
                 )
             }
         } else if currentPhase == .rechargingToFull {
@@ -436,10 +436,10 @@ final class BatteryCalibrationManager: ObservableObject {
         if enable {
             stopStressLoad()
             ScreenBrightnessController.shared.dimForFastCharge()
-            appendLog("回充优化: 熄灭屏幕/释放系统负载以加速回充")
+            appendLog("已开启极速回充策略 (降低屏幕功耗与系统发热)")
         } else {
             ScreenBrightnessController.shared.restoreBrightness()
-            appendLog("回充优化: 恢复屏幕亮度")
+            appendLog("回充完成，已恢复屏幕原始亮度")
         }
     }
     
@@ -483,18 +483,18 @@ final class BatteryCalibrationManager: ObservableObject {
             isThermalCutoffActive = true
             stopStressLoad()
             sendLocalNotification(
-                title: "触发高温保护熔断",
-                body: "电池当前温度 \(String(format: "%.1f", currentTemperature))°C，已暂停放电负载。"
+                title: "过热熔断保护触发",
+                body: "电池温度达到 \(String(format: "%.1f", currentTemperature))°C，已暂停放电负载压测。"
             )
-            appendLog("高温熔断: \(String(format: "%.1f", currentTemperature))°C >= 阈值 \(highTempThreshold)°C")
+            appendLog("温度熔断保护: \(String(format: "%.1f", currentTemperature))°C >= 阈值 \(highTempThreshold)°C，停止压测")
         } else if currentTemperature <= resumeTempThreshold && isThermalCutoffActive {
             isThermalCutoffActive = false
             startStressLoad()
             sendLocalNotification(
                 title: "温度恢复正常",
-                body: "电池温度降至 \(String(format: "%.1f", currentTemperature))°C，恢复放电负载。"
+                body: "电池温度降至 \(String(format: "%.1f", currentTemperature))°C，已恢复放电负载。"
             )
-            appendLog("恢复负载: \(String(format: "%.1f", currentTemperature))°C <= 恢复线 \(resumeTempThreshold)°C")
+            appendLog("温度已冷却: \(String(format: "%.1f", currentTemperature))°C <= 恢复阈值 \(resumeTempThreshold)°C，恢复压测")
         }
     }
     
@@ -526,18 +526,18 @@ final class BatteryCalibrationManager: ObservableObject {
         sessionStartDate = Date()
         
         enablePreventSleep()
-        appendLog(">>> 电池标定流程已启动 <<<")
+        appendLog(">>> 校准监测会话已启动 <<<")
         
         if signedAmperage < -0.05 || isDischargingOnAC {
             currentPhase = .discharging
             startDischargePercentage = currentPercentage
             dischargePhaseStartDate = Date()
-            appendLog("检测到已处于放电状态，直接进入标定放电...")
+            appendLog("系统正处于放电状态，直接进入放电监测阶段...")
             startStressLoad()
         } else {
             currentPhase = .chargingToFull
             dischargePhaseStartDate = nil
-            appendLog("当前电量 \(currentPercentage)%，等待初充至 100%...")
+            appendLog("系统当前处于供电/充电状态，等待先充至 100%...")
             stopStressLoad()
         }
     }
@@ -548,7 +548,7 @@ final class BatteryCalibrationManager: ObservableObject {
         disablePreventSleep()
         isSessionRunning = false
         currentPhase = .waitingForTrigger
-        appendLog("标定流程已手动终止")
+        appendLog("校准监测会话已停止")
     }
     
     private func finishCalibration() {
@@ -567,11 +567,11 @@ final class BatteryCalibrationManager: ObservableObject {
         let dcirFormatted = internalResistanceMilliohm > 0 ? String(format: "%.1f mΩ", internalResistanceMilliohm) : "--"
         
         appendLog("==========================================")
-        appendLog("            标定周期完成报告              ")
-        appendLog("总放电工时: \(finalDischargeDurationText)")
-        appendLog("放电能耗: \(dischargeFormatted) Wh | 回充能耗: \(rechargeFormatted) Wh")
-        appendLog("实测容量: \(capacityFormatted) Wh (\(mahFormatted) mAh) | 健康度: \(healthFormatted)")
-        appendLog("库仑效率 (Coulombic Efficiency): \(coulombicFormatted)")
+        appendLog("            电池校准过程已全部完成            ")
+        appendLog("放电阶段总时长: \(finalDischargeDurationText)")
+        appendLog("放电净能量: \(dischargeFormatted) Wh | 回充净能量: \(rechargeFormatted) Wh")
+        appendLog("计算电池容量: \(capacityFormatted) Wh (\(mahFormatted) mAh) | 健康度: \(healthFormatted)")
+        appendLog("库伦效率 (Coulombic Efficiency): \(coulombicFormatted)")
         appendLog("直流内阻 (DCIR): \(dcirFormatted)")
         appendLog("==========================================")
         
@@ -664,40 +664,41 @@ final class BatteryCalibrationManager: ObservableObject {
         
         var reportContent = """
         ==================================================
-        macOS 电池校准真实度报告
+        macOS 电池校准精准度测算报告
         ==================================================
-        设备型号: \(hardwareModel)
+        设备机型: \(hardwareModel)
         电池序列号: \(batterySerialNumber)
         开始时间: \(sessionStartDate?.description(with: .current) ?? "--")
         结束时间: \(Date().description(with: .current))
-        起始放电电量: \(startDischargePercentage)%
-        有效放电工时: \(finalDischargeDurationText)
-        循环次数: \(cycleCount) 次
-        出厂设计容量: \(String(format: "%.0f", designCapacityMAh)) mAh
-        实测放电容量: \(capacityFormatted) Wh (\(mahFormatted) mAh)
-        单次评定健康度: \(healthFormatted)
+        放电起始电量: \(startDischargePercentage)%
+        放电持续时间: \(finalDischargeDurationText)
+        电池循环计数: \(cycleCount) 次
+        设计标称容量: \(String(format: "%.0f", designCapacityMAh)) mAh
+        本次实测容量: \(capacityFormatted) Wh (\(mahFormatted) mAh)
+        本次实测健康度: \(healthFormatted)
         """
         
         if let agg = aggregatedHealth {
             reportContent.append("""
             
-            ----------------- 多周期聚合评定 -----------------
-            聚合采样周期: \(agg.validSessionsCount) 次
-            真实容量: \(String(format: "%.0f", agg.trueCapacityMAh)) mAh (\(String(format: "%.2f", agg.trueCapacityWh)) Wh)
-            真实健康度: \(String(format: "%.1f%%", agg.trueHealthPercentage))
+            ----------------- 多周期综合评定 -----------------
+            有效校准样本数: \(agg.validSessionsCount) 次
+            综合真实容量: \(String(format: "%.0f", agg.trueCapacityMAh)) mAh (\(String(format: "%.2f", agg.trueCapacityWh)) Wh)
+            综合真实健康度: \(String(format: "%.1f%%", agg.trueHealthPercentage))
             置信度评分: \(String(format: "%.0f%%", agg.confidenceScore))
             """)
         }
         
         reportContent.append("""
         
-        直流内阻 (DCIR): \(internalResistanceMilliohm > 0 ? String(format: "%.1f mΩ", internalResistanceMilliohm) : "--")
-        放电总能耗: \(dischargeFormatted) Wh (\(String(format: "%.3f", dischargeEnergyAh)) Ah)
-        回充总能耗: \(rechargeFormatted) Wh (\(String(format: "%.3f", rechargeEnergyAh)) Ah)
-        库仑效率: \(coulombicFormatted)
-        终止电压: \(String(format: "%.2f V", currentVoltage))
-        终止温度: \(String(format: "%.1f °C", currentTemperature))
-        ----------------- 遥测日志记录 -----------------
+        ----------------- 电池物理特性参数 -----------------
+        电池直流内阻 (DCIR): \(internalResistanceMilliohm > 0 ? String(format: "%.1f mΩ", internalResistanceMilliohm) : "--")
+        放电总净能量: \(dischargeFormatted) Wh (\(String(format: "%.3f", dischargeEnergyAh)) Ah)
+        回充总吸收能量: \(rechargeFormatted) Wh (\(String(format: "%.3f", rechargeEnergyAh)) Ah)
+        库伦充电效率: \(coulombicFormatted)
+        当前实时电压: \(String(format: "%.2f V", currentVoltage))
+        当前电池温度: \(String(format: "%.1f °C", currentTemperature))
+        ----------------- 会话完整执行日志 -----------------
         """)
         
         for log in logHistory {
@@ -719,7 +720,7 @@ final class BatteryCalibrationManager: ObservableObject {
         try? csvContent.write(to: csvFileURL, atomically: true, encoding: .utf8)
         self.lastCSVURL = csvFileURL
         
-        appendLog("报告生成成功: \(txtFileName) 与 \(csvFileName)")
+        appendLog("校准报表已自动导出至桌面: \(txtFileName) 与 \(csvFileName)")
     }
     
     func openLastReportInFinder() {
@@ -748,7 +749,7 @@ final class BatteryCalibrationManager: ObservableObject {
         
         if self.isAlDenteRunning != running {
             self.isAlDenteRunning = running
-            appendLog("AlDente 状态: \(running ? "已运行" : "未运行")")
+            appendLog("AlDente 运行状态更新: \(running ? "已运行" : "未运行")")
         }
         
         guard running else {
@@ -770,7 +771,7 @@ final class BatteryCalibrationManager: ObservableObject {
         
         if self.isAlDenteCalibrating != isCalibratingNow {
             self.isAlDenteCalibrating = isCalibratingNow
-            appendLog("AlDente Pro 校准状态: \(isCalibratingNow ? "正在标定" : "空闲")")
+            appendLog("AlDente Pro 校准流程: \(isCalibratingNow ? "进行中" : "待命/停止")")
         }
     }
     
@@ -785,7 +786,7 @@ final class BatteryCalibrationManager: ObservableObject {
         )
         if success == kIOReturnSuccess {
             isAssertionActive = true
-            appendLog("已开启屏幕常亮阻止休眠 (IOPMAssertion)")
+            appendLog("已成功激活防休眠锁 (IOPMAssertion)")
         }
     }
     
@@ -793,14 +794,14 @@ final class BatteryCalibrationManager: ObservableObject {
         guard isAssertionActive else { return }
         IOPMAssertionRelease(assertionID)
         isAssertionActive = false
-        appendLog("已释放阻止休眠锁")
+        appendLog("已释放防休眠锁")
     }
     
     private func startStressLoad() {
         stopStressLoad()
         guard !isThermalCutoffActive else { return }
         guard stressMode != .silent else {
-            appendLog("放电负载策略: CPU 附加负载 0%")
+            appendLog("静音模式: CPU 放电负载保持 0%")
             return
         }
         
@@ -831,7 +832,7 @@ final class BatteryCalibrationManager: ObservableObject {
             }
             stressTasks.append(task)
         }
-        appendLog("启动放电负载 [\(stressMode.rawValue)]: 已调度 \(workersCount) 线程")
+        appendLog("已开启放电加速负载 [\(stressMode.rawValue)]: 启动 \(workersCount) 个工作线程")
     }
     
     private func stopStressLoad() {
@@ -840,14 +841,16 @@ final class BatteryCalibrationManager: ObservableObject {
                 task.cancel()
             }
             stressTasks.removeAll()
-            appendLog("已终止放电高功耗负载")
+            appendLog("放电加速负载已全部停止")
         }
     }
     
-    // MARK: - 底层硬件电量与温度读取
+    // MARK: - 电池信息获取与温度校准
     private func fetchBatteryDetails() {
         let matchingDict = IOServiceMatching("AppleSmartBattery")
         let entry = IOServiceGetMatchingService(kIOMainPortDefault, matchingDict)
+        
+        var resolvedTemp: Double? = nil
         
         if entry != 0 {
             defer { IOObjectRelease(entry) }
@@ -856,14 +859,15 @@ final class BatteryCalibrationManager: ObservableObject {
             if IORegistryEntryCreateCFProperties(entry, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
                let dict = props?.takeRetainedValue() as? [String: Any] {
                 
+                // 1. 电压
                 if let v = dict["Voltage"] as? NSNumber {
                     self.currentVoltage = v.doubleValue / 1000.0
                 }
                 
+                // 2. 电流与功率
                 var rawSignedCurrent = 0.0
                 if let instAmp = dict["InstantAmperage"] as? NSNumber {
-                    let raw = instAmp.int64Value
-                    rawSignedCurrent = Double(raw)
+                    rawSignedCurrent = Double(instAmp.int64Value)
                 } else if let amp = dict["Amperage"] as? NSNumber {
                     rawSignedCurrent = Double(amp.int64Value)
                 }
@@ -872,6 +876,7 @@ final class BatteryCalibrationManager: ObservableObject {
                 self.currentAmperage = abs(self.signedAmperage)
                 self.currentPower = self.currentVoltage * self.currentAmperage
                 
+                // 3. 供电状态
                 self.isExternalConnected = dict["ExternalConnected"] as? Bool ?? false
                 let rawIsCharging = dict["IsCharging"] as? Bool ?? false
                 
@@ -886,6 +891,7 @@ final class BatteryCalibrationManager: ObservableObject {
                     self.isDischargingOnAC = false
                 }
                 
+                // 4. 百分比与容量
                 if let curCap = dict["CurrentCapacity"] as? NSNumber,
                    let maxCap = dict["MaxCapacity"] as? NSNumber,
                    maxCap.doubleValue > 0 {
@@ -906,12 +912,27 @@ final class BatteryCalibrationManager: ObservableObject {
                 if let serial = dict["Serial"] as? String ?? dict["BatterySerialNumber"] as? String {
                     self.batterySerialNumber = serial
                 }
+                
+                // 5. 原生读取 AppleSmartBattery 温度 (与 AlDente Pro 机制一致)
+                if let rawTemp = dict["Temperature"] as? NSNumber {
+                    let val = rawTemp.doubleValue
+                    if val > 20000 {
+                        // 单位: 0.01 K (例如 30215 -> 29.0°C)
+                        resolvedTemp = (val / 100.0) - 273.15
+                    } else if val > 2000 {
+                        // 单位: 0.1 K (例如 3021 -> 28.95°C)
+                        resolvedTemp = (val / 10.0) - 273.15
+                    } else if val > 100 && val < 1000 {
+                        // 单位: 0.1 °C (例如 290 -> 29.0°C)
+                        resolvedTemp = val / 10.0
+                    } else if val > 5 && val < 90 {
+                        resolvedTemp = val
+                    }
+                }
             }
         }
         
-        var resolvedTemp: Double? = nil
-        resolvedTemp = fetchBatteryTemperatureViaHID()
-        
+        // 降级策略 1: 若 AppleSmartBattery 无温度，尝试 IOPS
         if resolvedTemp == nil {
             if let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
                let list = IOPSCopyPowerSourcesList(snapshot)?.takeRetainedValue() as? [CFTypeRef] {
@@ -919,7 +940,9 @@ final class BatteryCalibrationManager: ObservableObject {
                     guard let desc = IOPSGetPowerSourceDescription(snapshot, src)?.takeUnretainedValue() as? [String: Any] else { continue }
                     if let t = desc["Temperature"] as? NSNumber {
                         let d = t.doubleValue
-                        if d > 2000 {
+                        if d > 20000 {
+                            resolvedTemp = (d / 100.0) - 273.15
+                        } else if d > 2000 {
                             resolvedTemp = (d / 10.0) - 273.15
                         } else if d > 5.0 && d < 90.0 {
                             resolvedTemp = d
@@ -929,7 +952,12 @@ final class BatteryCalibrationManager: ObservableObject {
             }
         }
         
-        if let valid = resolvedTemp, valid > 5.0 {
+        // 降级策略 2: 尝试 HID 传感器 (优先匹配真正的 Battery 电芯传感器，避免误取 PMU 供电芯片最高温)
+        if resolvedTemp == nil {
+            resolvedTemp = fetchBatteryTemperatureViaHID()
+        }
+        
+        if let valid = resolvedTemp, valid > 5.0 && valid < 85.0 {
             self.currentTemperature = valid
         }
     }
@@ -968,23 +996,31 @@ final class BatteryCalibrationManager: ObservableObject {
         guard let servicesArrayUnmanaged = copyServices(client) else { return nil }
         let servicesArray = servicesArrayUnmanaged.takeRetainedValue() as [AnyObject]
         
-        var candidates: [Double] = []
+        var batteryCellTemps: [Double] = []
+        var fallbackTemps: [Double] = []
+        
         for service in servicesArray {
             if let nameRef = copyProp(service, "Product" as CFString)?.takeRetainedValue() as? String {
                 let lower = nameRef.lowercased()
-                if lower.contains("battery") || lower.contains("gas gauge") || lower.contains("pmu tdev") || lower.contains("tb0t") {
-                    if let eventUnmanaged = copyEvent(service, 15, 0, 0) {
-                        let event = eventUnmanaged.takeRetainedValue()
-                        let temp = getFloatVal(event, 0x000F0000)
-                        if temp > 10.0 && temp < 85.0 {
-                            candidates.append(temp)
+                if let eventUnmanaged = copyEvent(service, 15, 0, 0) {
+                    let event = eventUnmanaged.takeRetainedValue()
+                    let temp = getFloatVal(event, 0x000F0000)
+                    if temp > 10.0 && temp < 80.0 {
+                        // 优先匹配真正的电池电芯传感器 (Gas Gauge / Battery)
+                        if lower.contains("gas gauge") || lower.contains("battery") {
+                            batteryCellTemps.append(temp)
+                        } else if lower.contains("tb0t") {
+                            fallbackTemps.append(temp)
                         }
                     }
                 }
             }
         }
         
-        return candidates.max()
+        if !batteryCellTemps.isEmpty {
+            return batteryCellTemps.reduce(0.0, +) / Double(batteryCellTemps.count)
+        }
+        return fallbackTemps.first
     }
     
     private func appendLog(_ text: String) {
