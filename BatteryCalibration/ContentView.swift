@@ -443,7 +443,7 @@ struct ContentView: View {
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
                         .strokeBorder(Color.primary.opacity(activeColorScheme == .dark ? 0.08 : 0.07), lineWidth: 0.8)
                 )
-                .onChange(of: manager.logHistory.count) { newCount in
+                .onChange(of: manager.logHistory.count) { oldCount, newCount in
                     if newCount > 0 {
                         withAnimation {
                             proxy.scrollTo(newCount - 1, anchor: .bottom)
@@ -836,7 +836,8 @@ struct PrecisionScopeCard: View {
     }
     
     private func updateProbeLocation(at location: CGPoint, proxy: ChartProxy, geometry: GeometryProxy) {
-        let plotOriginX = geometry[proxy.plotAreaFrame].origin.x
+        guard let plotFrame = proxy.plotFrame else { return }
+        let plotOriginX = geometry[plotFrame].origin.x
         let currentX = location.x - plotOriginX
         guard let targetDate: Date = proxy.value(atX: currentX) else { return }
         if let nearest = points.min(by: { abs($0.timestamp.timeIntervalSince(targetDate)) < abs($1.timestamp.timeIntervalSince(targetDate)) }) {
