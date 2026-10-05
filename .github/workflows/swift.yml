@@ -15,27 +15,30 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Show Environment
+      - name: Select Xcode 16
         run: |
+          sudo xcode-select -s /Applications/Xcode_16.app/Contents/Developer || \
+          sudo xcode-select -s /Applications/Xcode_16.0.app/Contents/Developer || \
+          sudo xcode-select -s /Applications/Xcode_16.1.app/Contents/Developer || \
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           xcodebuild -version
-          swift --version
 
-      - name: Build macOS App
+      - name: Build Targets
         run: |
+          # 1. 先构建 Helper 工具目标
           xcodebuild clean build \
             -project BatteryCalibration.xcodeproj \
-            -scheme BatteryCalibration \
-            -destination "platform=macOS" \
+            -target "InfinityComputer.BatteryCalibration.Helper" \
+            -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
-            | grep -E "error:|warning:|BUILD FAILED" || true
-          
-          # 如果构建失败，重新执行一次以返回准确的退出码
+            CODE_SIGN_IDENTITY=""
+
+          # 2. 构建主 App 目标
           xcodebuild build \
             -project BatteryCalibration.xcodeproj \
-            -scheme BatteryCalibration \
-            -destination "platform=macOS" \
+            -target "BatteryCalibration" \
+            -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            SWIFT_TREAT_WARNINGS_AS_ERRORS=NO
+            CODE_SIGN_IDENTITY=""
