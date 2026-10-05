@@ -9,7 +9,8 @@ struct BatteryCalibratorApp: App {
             ContentView(manager: manager)
         }
         .defaultSize(width: 760, height: 600)
-        // MARK: - MenuBar 状态栏常驻卡片
+        
+        // MARK: - MenuBar 菜单栏常驻
         MenuBarExtra {
             MenuBarControlPanel(manager: manager)
         } label: {
@@ -60,7 +61,23 @@ struct MenuBarControlPanel: View {
                     }
                 }
                 Spacer()
-                if manager.currentPhase == .discharging && manager.estimatedRemainingMinutes > 0 {
+                
+                // AI 精准剩余续航展示
+                if manager.aiPredictedRemainingMinutes > 0 {
+                    VStack(alignment: .trailing, spacing: 1) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 8))
+                                .foregroundColor(.purple)
+                            Text("AI精准续航")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(.secondary)
+                        }
+                        Text("\(manager.aiPredictedRemainingMinutes / 60)h \(manager.aiPredictedRemainingMinutes % 60)m")
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                            .foregroundColor(.orange)
+                    }
+                } else if manager.currentPhase == .discharging && manager.estimatedRemainingMinutes > 0 {
                     VStack(alignment: .trailing, spacing: 1) {
                         Text("预估剩余")
                             .font(.system(size: 9))
@@ -75,69 +92,26 @@ struct MenuBarControlPanel: View {
             
             Divider()
             
+            // 实时功耗与部件分布
             Grid(horizontalSpacing: 8, verticalSpacing: 8) {
                 GridRow {
-                    CompactMiniMetric(title: "实时功率", value: String(format: "%.2f W", manager.currentPower), icon: "bolt.fill", color: .orange)
-                    CompactMiniMetric(title: "总线电压", value: String(format: "%.2f V", manager.currentVoltage), icon: "waveform", color: .primary)
+                    CompactMiniMetric(title: "整机功率", value: String(format: "%.2f W", manager.currentPower), icon: "bolt.fill", color: .orange)
+                    CompactMiniMetric(title: "剩余电量", value: String(format: "%.0f mAh", manager.aiEstimatedRemainingMAh), icon: "battery.50", color: .primary)
                 }
                 GridRow {
-                    CompactMiniMetric(title: "充放电流", value: String(format: "%.2f A", manager.signedAmperage), icon: "speedometer", color: manager.signedAmperage < -0.05 ? .orange : (manager.signedAmperage > 0.05 ? .green : .primary))
-                    CompactMiniMetric(title: "电池温度", value: String(format: "%.1f °C", manager.currentTemperature), icon: "thermometer.medium", color: manager.currentTemperature >= 45.0 ? .red : .primary)
+                    CompactMiniMetric(title: "CPU 预估", value: String(format: "%.1f W", manager.estimatedCpuPower), icon: "cpu", color: .primary)
+                    CompactMiniMetric(title: "屏幕 / 主板", value: String(format: "%.1fW / %.1fW", manager.estimatedScreenPower, manager.estimatedBoardPower), icon: "display", color: .primary)
                 }
-            }
-            
-            Divider()
-            
-            VStack(alignment: .leading, spacing: 6) {
-                Text("放电负载策略")
-                    .font(.caption2)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.secondary)
-                Picker("", selection: $manager.stressMode) {
-                    ForEach(DischargeStressMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
-                    }
+                GridRow {
+                    CompactMiniMetric(title: "真实健康度", value: manager.aiTrueHealthPct > 0 ? String(format: "%.1f%%", manager.aiTrueHealthPct) : "--", icon: "heart.fill", color: manager.aiTrueHealthPct >= 80 ? .green : .orange)
+                    CompactMiniMetric(title: "真实全容量", value: manager.aiTrueCapacityMAh > 0 ? String(format: "%.0f mAh", manager.aiTrueCapacityMAh) : "--", icon: "gauge.with.needle", color: .primary)
                 }
-                .pickerStyle(.segmented)
-            }
-            
-            Divider()
-            
-            HStack(spacing: 8) {
-                if manager.currentPhase == .waitingForTrigger || manager.currentPhase == .completed {
-                    Button(action: {
-                        manager.startCalibrationSession()
-                    }) {
-                        Label("启动校准", systemImage: "play.fill")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.blue)
-                } else {
-                    Button(action: {
-                        manager.stopCalibrationSession()
-                    }) {
-                        Label("终止校准", systemImage: "stop.fill")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(.red)
-                }
-                
-                Button(action: {
-                    NSApplication.shared.terminate(nil)
-                }) {
-                    Image(systemName: "power")
-                }
-                .buttonStyle(.bordered)
-                .help("退出程序")
             }
         }
         .padding(14)
-        .frame(width: 290)
+        .frame(width: 300)
     }
 }
-
 private struct CompactMiniMetric: View {
     let title: String
     let value: String
