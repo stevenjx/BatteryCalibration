@@ -6,6 +6,7 @@ import os.log
 public protocol BatteryControlHelperProtocol: NSObjectProtocol {
     func setInhibitCharging(_ enabled: Bool, withReply reply: @escaping (Bool, NSString?) -> Void)
     func getSMCStatus(withReply reply: @escaping (NSDictionary) -> Void)
+    func getHardwareSensors(withReply reply: @escaping (NSDictionary) -> Void)
 }
 
 public final class BatteryControlClient: @unchecked Sendable {
@@ -18,7 +19,7 @@ public final class BatteryControlClient: @unchecked Sendable {
     
     private init() {}
     
-    // MARK: - 守护进程状态检测与注册管理
+    // MARK: - 权限状态检查
     
     public var isDaemonRegistered: Bool {
         if #available(macOS 13.0, *) {
@@ -50,7 +51,7 @@ public final class BatteryControlClient: @unchecked Sendable {
         }
     }
     
-    // MARK: - XPC 连接与通信
+    // MARK: - XPC 连接池管理
     
     private func getOrCreateConnection() -> NSXPCConnection {
         connectionLock.lock()
@@ -63,11 +64,16 @@ public final class BatteryControlClient: @unchecked Sendable {
         let connection = NSXPCConnection(machServiceName: Self.machServiceName, options: [])
         let interface = NSXPCInterface(with: BatteryControlHelperProtocol.self)
         
-        // 显式白名单约束，杜绝 NSObject 泛化告警
         let allowedClasses = NSSet(array: [NSDictionary.self, NSString.self, NSNumber.self]) as! Set<AnyHashable>
         interface.setClasses(
             allowedClasses,
             for: #selector(BatteryControlHelperProtocol.getSMCStatus(withReply:)),
+            argumentIndex: 0,
+            ofReply: true
+        )
+        interface.setClasses(
+            allowedClasses,
+            for: #selector(BatteryControlHelperProtocol.getHardwareSensors(withReply:)),
             argumentIndex: 0,
             ofReply: true
         )
@@ -146,6 +152,26 @@ public final class BatteryControlClient: @unchecked Sendable {
             
             helper.getSMCStatus { status in
                 continuation.resume(returning: (status as? [String: NSNumber]) ?? [:])
+            }
+        }
+    }
+
+    public func getHardwareSensors() async throws -> [String: NSNumber] {
+        let connection = getOrCreateConnection()
+        return try await withCheckedThrowingContinuation { continuation in
+            let remote = connection.remoteObjectProxyWithErrorHandler { error in
+                continuation.resume(throwing: error)
+            }
+            guard let helper = remote as? BatteryControlHelperProtocol else {
+                continuation.resume(throwing: NSError(
+                    domain: "BatteryControlClient",
+                    code: -2,
+                    userInfo: [NSLocalizedDescriptionKey: "Failed to cast remote proxy"]
+                ))
+                return
+            }
+            helper.getHardwareSensors { dict in
+                continuation.resume(returning: (dict as? [String: NSNumber]) ?? [:])
             }
         }
     }
